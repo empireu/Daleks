@@ -1,6 +1,5 @@
 ﻿using System.Drawing;
-using System.Runtime.CompilerServices;
-using Microsoft.VisualBasic.CompilerServices;
+using System.Text;
 
 namespace Daleks;
 
@@ -115,4 +114,102 @@ public enum TileType
     Acid,
     Unknown,
     Robot
+}
+
+public enum Direction
+{
+    U, 
+    D,
+    L,
+    R
+}
+
+public enum ActionType
+{
+    Attack,
+    Mine,
+    Scan,
+    Place
+}
+
+public enum UpgradeType
+{
+    Sight,
+    Attack,
+    Drill,
+    Movement,
+    Antenna,
+    Battery,
+    Heal
+}
+
+public readonly struct ActionCommand
+{
+    public ActionType Type { get; }
+    public Direction Dir { get; }
+
+    public ActionCommand(ActionType type, Direction dir)
+    {
+        Type = type;
+        Dir = dir;
+    }
+}
+
+
+public class CommandList
+{
+    public readonly List<Direction> Moves = new();
+    public ActionCommand? Action;
+    public readonly List<UpgradeType> Upgrades = new();
+
+    public string Serialize()
+    {
+        var sb = new StringBuilder();
+
+        void Append(string s)
+        {
+            sb.Append(s);
+            sb.Append(' ');
+        }
+
+        foreach (var moveDir in Moves)
+        {
+            Append(moveDir.ToString());
+        }
+
+        if (Action.HasValue)
+        {
+            var action = Action.Value;
+
+            Append(action.Type switch 
+            {
+                ActionType.Attack => "A",
+                ActionType.Mine => "M",
+                ActionType.Scan => "S",
+                ActionType.Place => "P",
+                _ => throw new ArgumentOutOfRangeException()
+            });
+
+            Append(action.Dir.ToString());
+        }
+
+        foreach (var upgradeType in Upgrades)
+        {
+            Append("B");
+         
+            Append(upgradeType switch
+            {
+                UpgradeType.Sight => "S",
+                UpgradeType.Attack => "A",
+                UpgradeType.Drill => "D",
+                UpgradeType.Movement => "M",
+                UpgradeType.Antenna => "R",
+                UpgradeType.Battery => "B",
+                UpgradeType.Heal => "H",
+                _ => throw new ArgumentOutOfRangeException()
+            });
+        }
+
+        return sb.ToString();
+    }
 }
