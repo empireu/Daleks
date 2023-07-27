@@ -5,7 +5,7 @@ namespace Daleks;
 internal class Controller
 {
     private const int GridSearchGranularity = 7;
-    private const int RoundSafety = 10;
+    private const int RoundSafety = 15;
 
     private static readonly List<(TileType, int)> MiningTargets = new()
     {
@@ -20,6 +20,8 @@ internal class Controller
 
     private readonly HashSet<Vector2di> _gridSearchPoints = new();
     private readonly int _initialGridPoints;
+
+    private readonly List<(TileType, Vector2di)> _knownOres = new();
 
     private Vector2di MapCenter => _gridSize / 2;
 
@@ -64,6 +66,14 @@ internal class Controller
             if (tile != TileType.Osmium && tile != TileType.Iron)
             {
                 _nonOreTiles[viewPos] = true;
+                _knownOres.RemoveAll(x => x.Item2 == viewPos);
+            }
+            else
+            {
+                if (_knownOres.All(x => x.Item2 != viewPos))
+                {
+                    _knownOres.Add((tile, viewPos));
+                }
             }
 
             if (tile is TileType.Bedrock or TileType.Acid)
@@ -109,6 +119,8 @@ internal class Controller
         return results;
     }
 
+    private (Vector2di, List<Vector2di>)? _lastPath;
+
     private static List<Vector2di>? FindPath(Vector2di start, Vector2di end, GameState state)
     {
         var queue = new PriorityQueue<List<Vector2di>, int>();
@@ -128,6 +140,11 @@ internal class Controller
 
             if (back == end)
             {
+                if (path.Count > 0)
+                {
+                    path.RemoveAt(0);
+                }
+
                 return path;
             }
 
@@ -175,18 +192,39 @@ internal class Controller
 
         if (playerPos == target)
         {
+            _lastPath = null;
             return StepStatus.Success;
         }
 
-        var path = FindPath(playerPos, target, cl.Tail);
+        List<Vector2di>? path;
 
-        if (path == null || path.Count < 2)
+        if (_lastPath != null)
+        {
+            var (end, p) = _lastPath.Value;
+            path = end == target ? p : FindPath(playerPos, target, cl.Tail);
+            _lastPath = null;
+        }
+        else
+        {
+            path = FindPath(playerPos, target, cl.Tail);
+        }
+
+        if (path == null || path.Count == 0)
         {
             Console.WriteLine("Failed to pathfind");
             return StepStatus.Failure;
         }
-        
-        var dir = playerPos.DirectionTo(path[1]);
+
+        _lastPath = (target, path);
+
+        var dir = playerPos.DirectionTo(path[0]);
+        path.RemoveAt(0);
+
+        if (cl.Tail.Neighbor(dir) is TileType.Bedrock && _lastPath != null && _lastPath.Value.Item1 == target && _lastPath.Value.Item2 == path)
+        {
+            _lastPath = null;
+            return StepTowards(cl, target, useDigging);
+        }
 
         cl.Move(dir);
 
@@ -204,16 +242,19 @@ internal class Controller
     {
         var state = cl.Tail;
 
-        var candidatesInView = new List<(TileType type, Vector2di pos, int priority)>();
+        var candidatesInView = new List<(TileType type, Vector2di pos)>();
 
-        foreach (var (targetType, priority) in MiningTargets)
+        candidatesInView.AddRange(_knownOres);
+
+        Console.WriteLine($"Known: {_knownOres.Count}");
+
+        foreach (var (targetType, _) in MiningTargets)
         {
             if (mapping.Contains(targetType))
             {
                 candidatesInView.Add((
                     targetType, 
-                    mapping[targetType].MinBy(p => Vector2di.DistanceSqr(p, state.Player.ActualPos)),
-                    priority
+                    mapping[targetType].MinBy(p => Vector2di.DistanceSqr(p, state.Player.ActualPos))
                 ));
             }
         }
@@ -345,7 +386,7 @@ internal class Controller
                     _gridSearchPoints.Remove(targetLookpoint);
                 }
 
-                Console.WriteLine($"SEARCHING... {targetLookpoint}");
+                Console.WriteLine($"Next anchor: {targetLookpoint}");
             }
         }
         else
