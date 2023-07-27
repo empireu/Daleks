@@ -16,19 +16,17 @@ GameState ReadState()
         try
         {
             var state = GameState.Load(File.ReadAllLines(path), round);
-
             Console.WriteLine($"Read {round}");
-
             return state;
         }
-        catch (IOException e)
+        catch (IOException)
         {
-            Thread.Sleep(100);
+            Thread.Sleep(25);
         }
     }
 }
 
-void Submit(CommandList cl)
+void Submit(CommandState cl)
 {
     var str = cl.Serialize();
     File.WriteAllText($"./game/c{id}_{round}.txt", str);
@@ -36,6 +34,10 @@ void Submit(CommandList cl)
     Console.WriteLine("Submitting...");
 
     Console.WriteLine($"Moves: {string.Join(' ', cl.Moves)}");
+    if (cl.Moves.Count == 0)
+    {
+        Console.WriteLine("  N/A");
+    }
 
     if (cl.HasAction)
     {
@@ -47,16 +49,26 @@ void Submit(CommandList cl)
         }
     }
 
-    Console.WriteLine($"Buying {string.Join(", ", cl.Upgrades)}");
+    if (cl.Upgrades.Count > 0)
+    {
+        Console.WriteLine($"Buying {string.Join(", ", cl.Upgrades)}");
+    }
 }
 
-var controller = new Controller();
+Controller? controller = null;
 
 while (true)
 {
     Console.WriteLine($"----- Round {round} -----");
 
     var state = ReadState();
+
+    if (controller == null)
+    {
+        Console.WriteLine($"Initializing game with grid of {state.GridSize}");
+        controller = new Controller(state.GridSize, state.Player.ActualPos);
+    }
+
     var player = state.Player;
 
     Console.WriteLine($"HP: {player.Hp}");
@@ -74,7 +86,7 @@ while (true)
                       $"  iron: {player.IronCount}\n" +
                       $"  osmium: {player.OsmiumCount}");
 
-    var cl = new CommandList(state);
+    var cl = new CommandState(state);
     controller.Update(cl);
     Submit(cl);
 

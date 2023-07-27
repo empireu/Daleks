@@ -1,5 +1,4 @@
-﻿using System.Drawing;
-using System.Text;
+﻿using System.Text;
 
 namespace Daleks;
 
@@ -18,33 +17,50 @@ public readonly struct PlayerState
     public int OsmiumCount { get; init; }
 }
 
+public class Grid<T>
+{
+    public T[] Storage { get; }
+    public Vector2di GridSize { get; }
+
+    public Grid(T[] storage, Vector2di gridSize)
+    {
+        Storage = storage;
+        GridSize = gridSize;
+    }
+
+    public Grid(Vector2di size) : this(new T[size.X * size.Y], size)
+    {
+
+    }
+
+    public ref T this[int x, int y] => ref Storage[y * GridSize.X + x];
+    public ref T this[Vector2di v] => ref this[v.X, v.Y];
+
+    public bool IsWithinBounds(int x, int y) => x >= 0 && x < GridSize.X && y >= 0 && y < GridSize.Y;
+    public bool IsWithinBounds(Vector2di v) => IsWithinBounds(v.X, v.Y);
+}
+
 public class GameState
 {
-    public Vector2di GridSize { get; }
     public int Round { get; }
 
-    private readonly TileType[] _grid;
+    private readonly Grid<TileType> _grid;
 
-    private GameState(Vector2di gridSize, TileType[] grid, int round)
+    public Vector2di GridSize => _grid.GridSize;
+
+    private GameState(Grid<TileType> grid, int round)
     {
-        GridSize = gridSize;
         _grid = grid;
         Round = round;
     }
 
     private GameState(Vector2di gridSize, int round)
     {
-        GridSize = gridSize;
+        _grid = new Grid<TileType>(gridSize);
         Round = round;
-        _grid = new TileType[gridSize.X * gridSize.Y];
     }
 
     public PlayerState Player { get; private set; }
-
-    private ref TileType CellAt(int x, int y) => ref _grid[y * GridSize.X + x];
-
-    public TileType this[int x, int y] => CellAt(x, y);
-    public TileType this[Vector2di v] => this[v.X, v.Y];
 
     private static Vector2di PopTuple(ref Span<string> lines)
     {
@@ -60,6 +76,11 @@ public class GameState
         return result;
     }
 
+    public TileType this[int x, int y] => _grid[x, y];
+    public TileType this[Vector2di v] => _grid[v.X, v.Y];
+    public bool IsWithinBounds(int x, int y) => _grid.IsWithinBounds(x, y);
+    public bool IsWithinBounds(Vector2di v) => _grid.IsWithinBounds(v);
+
     public static GameState Load(Span<string> lines, int round)
     {
         var size = PopTuple(ref lines);
@@ -73,7 +94,7 @@ public class GameState
             {
                 var c = line[x];
 
-                state.CellAt(x, y) = c switch
+                state._grid[x, y] = c switch
                 {
                     '.' => TileType.Dirt,
                     'X' => TileType.Stone,
@@ -116,7 +137,7 @@ public class GameState
 
     public GameState Bind(PlayerState player)
     {
-        return new GameState(GridSize, _grid, Round)
+        return new GameState(_grid, Round)
         {
             Player = player
         };
@@ -139,7 +160,7 @@ public enum TileType
     Robot
 }
 
-public enum Direction
+public enum Direction : byte
 {
     U, 
     D,
@@ -178,9 +199,9 @@ public readonly struct ActionCommand
     }
 }
 
-public class CommandList
+public class CommandState
 {
-    public CommandList(GameState headState)
+    public CommandState(GameState headState)
     {
         Head = headState;
         _snapshots = new List<GameState> { Head };
@@ -194,7 +215,6 @@ public class CommandList
     public IReadOnlyList<ActionCommand> Actions => _actions;
     public IReadOnlyList<Direction> Moves => _moves;
     public IReadOnlyList<UpgradeType> Upgrades => _upgrades;
-
     public IReadOnlyList<GameState> StateSnapshots => _snapshots;
     
     public GameState Head { get; }
@@ -244,7 +264,78 @@ public class CommandList
         }
     }
 
-    public bool CanHeal => Tail.Player is { OsmiumCount: > 1, Hp: < 15 };
+    public void Attack(Direction dir)
+    {
+        ValidateAction();
+
+        _actions.Add(new ActionCommand(ActionType.Attack, dir));
+    }
+
+    public void Mine(Direction direction) => Mine(new[] { direction });
+
+    public bool CanHeal => Tail.Player is { OsmiumCount: > 0, Hp: < 15 };
+    public bool CanBuyBattery => Tail.Player is { OsmiumCount: > 0, IronCount: > 0 };
+
+    public bool BuyBattery()
+    {
+        if (Tail.Player.HasBattery)
+        {
+            return true;
+        }
+
+        if (!CanBuyBattery)
+        {
+            return false;
+        }
+
+        PushState(Tail.Bind(Tail.Player with
+        {
+            HasBattery = true,
+            OsmiumCount = Tail.Player.OsmiumCount - 1,
+            IronCount = Tail.Player.IronCount - 1
+        }));
+
+        _upgrades.Add(UpgradeType.Battery);
+
+        return true;
+    }
+
+    public bool BuyAttack()
+    {
+        if (Tail.Player.Attack == 3)
+        {
+            return false;
+        }
+
+        if (Tail.Player is { Attack: 1, IronCount: 3 })
+        {
+            PushState(Tail.Bind(Tail.Player with
+            {
+                Attack = 2,
+                IronCount = Tail.Player.IronCount - 3
+            }));
+
+            _upgrades.Add(UpgradeType.Attack);
+
+            return true;
+        }
+
+        if (Tail.Player is { Attack: 2, IronCount: 6, OsmiumCount: 1 })
+        {
+            PushState(Tail.Bind(Tail.Player with
+            {
+                Attack = 3,
+                IronCount = Tail.Player.IronCount - 6,
+                OsmiumCount = Tail.Player.OsmiumCount - 1
+            }));
+
+            _upgrades.Add(UpgradeType.Attack);
+
+            return true;
+        }
+
+        return false;
+    }
 
     private void PushState(GameState state) => _snapshots.Add(state);
 
