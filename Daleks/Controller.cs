@@ -4,6 +4,9 @@ namespace Daleks;
 
 internal class Controller
 {
+    private const int GridSearchGranularity = 7;
+    private const int RoundSafety = 10;
+
     private static readonly List<(TileType, int)> MiningTargets = new()
     {
        ( TileType.Osmium, 0),
@@ -13,20 +16,19 @@ internal class Controller
     private readonly Vector2di _gridSize;
     private readonly Grid<bool> _nonOreTiles;
     private readonly Vector2di _basePos;
+    private readonly int _acidRounds;
 
-    private readonly List<Vector2di> _candidateOreTiles = new();
     private readonly HashSet<Vector2di> _gridSearchPoints = new();
     private readonly int _initialGridPoints;
 
     private Vector2di MapCenter => _gridSize / 2;
 
-    private const int GridSearchGranularity = 7;
-
-    public Controller(Vector2di gridSize, Vector2di basePos)
+    public Controller(Vector2di gridSize, Vector2di basePos, int acidRounds)
     {
         _gridSize = gridSize;
         _nonOreTiles = new Grid<bool>(gridSize);
         _basePos = basePos;
+        _acidRounds = acidRounds;
 
         for (var y = 0; y < gridSize.Y; y+=GridSearchGranularity)
         {
@@ -53,10 +55,6 @@ internal class Controller
 
         _gridSearchPoints.Remove(state.Player.ActualPos);
         
-        var botPos = cl.Tail.Player.ActualPos;
-
-        _candidateOreTiles.Clear();
-
         foreach (var viewPos in view)
         {
             var tile = state[viewPos];
@@ -73,30 +71,6 @@ internal class Controller
                 _gridSearchPoints.Remove(viewPos);
             }
         }
-
-        for (var y = 0; y < _gridSize.Y; y++)
-        {
-            for (var x = 0; x < _gridSize.X; x++)
-            {
-                var v = new Vector2di(x, y);
-
-                if (!_nonOreTiles[v])
-                {
-                    _candidateOreTiles.Add(v);
-                }
-                else
-                {
-                    _gridSearchPoints.Remove(v);
-                }
-
-                if (state[v] is TileType.Bedrock or TileType.Acid)
-                {
-                    _gridSearchPoints.Remove(v);
-                }
-            }
-        }
-
-        _candidateOreTiles.Sort((a, b) => Vector2di.DistanceSqr(a, botPos).CompareTo(Vector2di.DistanceSqr(b, botPos)));
     }
 
     private static HashSet<Vector2di> GetTileView(CommandState cl, out MultiMap<TileType, Vector2di> mapping)
@@ -190,7 +164,7 @@ internal class Controller
 
     private enum StepStatus
     {
-        Fallback,
+        Failure,
         Running,
         Success
     }
@@ -206,25 +180,13 @@ internal class Controller
 
         var path = FindPath(playerPos, target, cl.Tail);
 
-        Direction dir;
-
-        if (path == null || path.Count == 0)
+        if (path == null || path.Count < 2)
         {
-            Console.WriteLine("Path is empty!");
-
-            if (playerPos == MapCenter)
-            {
-                return StepStatus.Fallback;
-            }
-
-            Console.WriteLine("Falling back onto map center");
-
-            dir = playerPos.DirectionTo(MapCenter);
+            Console.WriteLine("Failed to pathfind");
+            return StepStatus.Failure;
         }
-        else
-        {
-            dir = playerPos.DirectionTo(path[1]);
-        }
+        
+        var dir = playerPos.DirectionTo(path[1]);
 
         cl.Move(dir);
 
@@ -289,7 +251,7 @@ internal class Controller
 
         var target = candidatesInView.MinBy(c => Vector2di.DistanceSqr(c.pos, state.Player.ActualPos));
 
-        StepTowards(cl, target.pos);
+        StepTowards(cl, target.pos, !Attack(cl));
 
         Console.WriteLine("STEPPING...");
         
@@ -303,7 +265,14 @@ internal class Controller
         {
             for (var dist = 1; dist <= state.Player.Attack; dist++)
             {
-                var tile = state[state.Player.ActualPos + direction.Offset() * dist];
+                var p = state.Player.ActualPos + direction.Offset() * dist;
+
+                if (!state.IsWithinBounds(p))
+                {
+                    continue;
+                }
+
+                var tile = state[p];
 
                 if (tile == TileType.Robot)
                 {
@@ -328,7 +297,7 @@ internal class Controller
 
         UpdateSearchData(cl, viewedTiles);
 
-        Console.WriteLine($"Candidate tiles: {_candidateOreTiles.Count}, grid progress: {((_initialGridPoints - _gridSearchPoints.Count) / (float)_initialGridPoints * 100f):F}%");
+        Console.WriteLine($"Search progress: {((_initialGridPoints - _gridSearchPoints.Count) / (float)_initialGridPoints * 100f):F}%");
         Console.WriteLine("\n\n\n");
 
         Console.WriteLine("Performing upgrades:");
@@ -351,7 +320,7 @@ internal class Controller
             }
         }
 
-        if (cl.Tail.Round < 500 && _gridSearchPoints.Count > 0)
+        if (cl.Tail.Round < (_acidRounds - RoundSafety) && _gridSearchPoints.Count > 0)
         {
             Console.WriteLine("FARMING...\n");
 
@@ -371,12 +340,12 @@ internal class Controller
             {
                 var targetLookpoint = _gridSearchPoints.MinBy(p => Vector2di.DistanceSqr(p, state.Player.ActualPos));
 
-                if (StepTowards(cl, targetLookpoint, !Attack(cl)) == StepStatus.Fallback)
+                if (StepTowards(cl, targetLookpoint, !Attack(cl)) == StepStatus.Failure)
                 {
                     _gridSearchPoints.Remove(targetLookpoint);
                 }
 
-                Console.WriteLine("SEARCHING...");
+                Console.WriteLine($"SEARCHING... {targetLookpoint}");
             }
         }
         else
@@ -392,7 +361,17 @@ internal class Controller
                 attacked = Attack(cl);
             }
 
-            StepTowards(cl, MapCenter, !attacked);
+            if (StepTowards(cl, MapCenter, !attacked) == StepStatus.Failure)
+            {
+                var dir = state.Player.ActualPos.DirectionTo(MapCenter);
+                
+                cl.Move(dir);
+
+                if (!attacked)
+                {
+                    cl.Mine(dir);
+                }
+            }
         }
     }
 }

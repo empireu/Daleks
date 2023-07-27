@@ -3,6 +3,9 @@
 Console.Write("Id: ");
 var id = int.Parse(Console.ReadLine()!);
 
+Console.Write("\nRounds (500): ");
+var rounds = int.TryParse(Console.ReadLine(), out var i) ? i : 500;
+
 var round = 0;
 
 GameState ReadState()
@@ -66,7 +69,7 @@ while (true)
     if (controller == null)
     {
         Console.WriteLine($"Initializing game with grid of {state.GridSize}");
-        controller = new Controller(state.GridSize, state.Player.ActualPos);
+        controller = new Controller(state.GridSize, state.Player.ActualPos, rounds);
     }
 
     var player = state.Player;
