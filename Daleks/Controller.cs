@@ -2,28 +2,6 @@
 
 namespace Daleks;
 
-internal class Cluster
-{
-    public HashSet<Vector2di> Tiles { get; }
-    public Vector2di Center { get; }
-
-    public Cluster(HashSet<Vector2di> tiles)
-    {
-        Tiles = tiles;
-
-        var center = Vector2di.Zero;
-
-        foreach (var t in tiles)
-        {
-            center += t;
-        }
-
-        center /= tiles.Count;
-
-        Center = center;
-    }
-}
-
 internal class Controller
 {
     private static readonly List<(TileType, int)> MiningTargets = new()
@@ -40,7 +18,7 @@ internal class Controller
     private readonly HashSet<Vector2di> _gridSearchPoints = new();
     private readonly int _initialGridPoints;
 
-    private Vector2di _mapCenter => _gridSize / 2;
+    private Vector2di MapCenter => _gridSize / 2;
 
     private const int GridSearchGranularity = 7;
 
@@ -107,6 +85,11 @@ internal class Controller
                     _candidateOreTiles.Add(v);
                 }
                 else
+                {
+                    _gridSearchPoints.Remove(v);
+                }
+
+                if (state[v] is TileType.Bedrock or TileType.Acid)
                 {
                     _gridSearchPoints.Remove(v);
                 }
@@ -205,13 +188,20 @@ internal class Controller
         return null;
     }
 
-    private bool StepTowards(CommandState cl, Vector2di target)
+    private enum StepStatus
+    {
+        Fallback,
+        Running,
+        Success
+    }
+
+    private StepStatus StepTowards(CommandState cl, Vector2di target, bool useDigging = true)
     {
         var playerPos = cl.Tail.Player.ActualPos;
 
         if (playerPos == target)
         {
-            return true;
+            return StepStatus.Success;
         }
 
         var path = FindPath(playerPos, target, cl.Tail);
@@ -222,12 +212,14 @@ internal class Controller
         {
             Console.WriteLine("Path is empty!");
 
-            if (playerPos == _mapCenter)
+            if (playerPos == MapCenter)
             {
-                return true;
+                return StepStatus.Fallback;
             }
+
             Console.WriteLine("Falling back onto map center");
-            dir = playerPos.DirectionTo(_mapCenter);
+
+            dir = playerPos.DirectionTo(MapCenter);
         }
         else
         {
@@ -235,11 +227,15 @@ internal class Controller
         }
 
         cl.Move(dir);
-        cl.Mine(dir);
+
+        if (useDigging)
+        {
+            cl.Mine(dir);
+        }
 
         Console.WriteLine($"STEPPING TOWARDS {cl.Tail.Neighbor(dir)}");
 
-        return false;
+        return StepStatus.Running;
     }
 
     private bool MineView(CommandState cl, MultiMap<TileType, Vector2di> mapping)
@@ -300,6 +296,27 @@ internal class Controller
         return true;
     }
 
+    private bool Attack(CommandState cl)
+    {
+        var state = cl.Tail;
+        foreach (var direction in Enum.GetValues<Direction>())
+        {
+            for (var dist = 1; dist <= state.Player.Attack; dist++)
+            {
+                var tile = state[state.Player.ActualPos + direction.Offset() * dist];
+
+                if (tile == TileType.Robot)
+                {
+                    cl.Attack(direction);
+                    Console.WriteLine($"Attacking {direction}");
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     public void Update(CommandState cl)
     {
         Console.WriteLine($"Position: {cl.Tail.Player.ActualPos}");
@@ -314,25 +331,27 @@ internal class Controller
         Console.WriteLine($"Candidate tiles: {_candidateOreTiles.Count}, grid progress: {((_initialGridPoints - _gridSearchPoints.Count) / (float)_initialGridPoints * 100f):F}%");
         Console.WriteLine("\n\n\n");
 
+        Console.WriteLine("Performing upgrades:");
+        
         if (state.Player.HasBattery)
         {
             if (cl.Heal())
             {
-                Console.WriteLine("  HEALED");
+                Console.WriteLine("  +Healing");
             }
 
-            // Only buy other upgrades if osmium is in abundance
-
-            if (state.Player.OsmiumCount > 1)
+            if (cl.BuySight())
             {
-                if (cl.BuyAttack())
-                {
-                    Console.WriteLine("  ATTACK");
-                }
+                Console.WriteLine("  +Sight");
+            }
+
+            if (cl.BuyAttack())
+            {
+                Console.WriteLine("  +Attack");
             }
         }
 
-        if (cl.Tail.Round < 100 && _gridSearchPoints.Count > 0)
+        if (cl.Tail.Round < 500 && _gridSearchPoints.Count > 0)
         {
             Console.WriteLine("FARMING...\n");
 
@@ -340,7 +359,7 @@ internal class Controller
             {
                 Console.WriteLine("Buying battery...");
 
-                if (StepTowards(cl, _basePos))
+                if (StepTowards(cl, _basePos) == StepStatus.Success)
                 {
                     cl.BuyBattery();
                 }
@@ -352,7 +371,10 @@ internal class Controller
             {
                 var targetLookpoint = _gridSearchPoints.MinBy(p => Vector2di.DistanceSqr(p, state.Player.ActualPos));
 
-                StepTowards(cl, targetLookpoint);
+                if (StepTowards(cl, targetLookpoint, !Attack(cl)) == StepStatus.Fallback)
+                {
+                    _gridSearchPoints.Remove(targetLookpoint);
+                }
 
                 Console.WriteLine("SEARCHING...");
             }
@@ -363,27 +385,14 @@ internal class Controller
 
             var acid = Enum.GetValues<Direction>().Any(d => state.Neighbor(d) == TileType.Acid);
 
+            var attacked = false;
+
             if (!acid)
             {
-                // Try to attack
-
-                foreach (var direction in Enum.GetValues<Direction>())
-                {
-                    for (var dist = 1; dist <= state.Player.Attack; dist++)
-                    {
-                        var tile = state[state.Player.ActualPos + direction.Offset() * dist];
-
-                        if (tile == TileType.Robot)
-                        {
-                            cl.Attack(direction);
-                            Console.WriteLine($"ATTACKED {direction}");
-                            return;
-                        }
-                    }
-                }
+                attacked = Attack(cl);
             }
 
-            StepTowards(cl, _mapCenter);
+            StepTowards(cl, MapCenter, !attacked);
         }
     }
 }

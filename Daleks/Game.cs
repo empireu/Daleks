@@ -307,20 +307,18 @@ public class CommandState
             return false;
         }
 
-        if (Tail.Player is { Attack: 1, IronCount: 3 })
+        if (Tail.Player is { Attack: 1, IronCount: >= 3 })
         {
             PushState(Tail.Bind(Tail.Player with
             {
                 Attack = 2,
                 IronCount = Tail.Player.IronCount - 3
             }));
-
             _upgrades.Add(UpgradeType.Attack);
-
             return true;
         }
 
-        if (Tail.Player is { Attack: 2, IronCount: 6, OsmiumCount: 1 })
+        if (Tail.Player is { Attack: 2, IronCount: >= 6, OsmiumCount: >= 1 })
         {
             PushState(Tail.Bind(Tail.Player with
             {
@@ -328,9 +326,40 @@ public class CommandState
                 IronCount = Tail.Player.IronCount - 6,
                 OsmiumCount = Tail.Player.OsmiumCount - 1
             }));
-
             _upgrades.Add(UpgradeType.Attack);
+            return true;
+        }
 
+        return false;
+    }
+
+    public bool BuySight()
+    {
+        if (Tail.Player.Vision == 3)
+        {
+            return false;
+        }
+
+        if (Tail.Player is { Vision: 1, IronCount: >= 3 })
+        {
+            PushState(Tail.Bind(Tail.Player with
+            {
+                Vision = 2,
+                IronCount = Tail.Player.IronCount - 3
+            }));
+            _upgrades.Add(UpgradeType.Sight);
+            return true;
+        }
+
+        if (Tail.Player is { Vision: 2, IronCount: >= 6, OsmiumCount: >= 1 })
+        {
+            PushState(Tail.Bind(Tail.Player with
+            {
+                Vision = 3,
+                IronCount = Tail.Player.IronCount - 6,
+                OsmiumCount = Tail.Player.OsmiumCount - 1
+            }));
+            _upgrades.Add(UpgradeType.Sight);
             return true;
         }
 
@@ -351,6 +380,8 @@ public class CommandState
             Hp = Math.Min(Tail.Player.Hp + 5, 15),
             OsmiumCount = Tail.Player.OsmiumCount - 1
         }));
+
+        _upgrades.Add(UpgradeType.Heal);
 
         return true;
     }
