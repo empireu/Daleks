@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using Common;
 
 namespace Daleks;
 
@@ -55,7 +56,7 @@ internal class Controller
     {
         var state = cl.Tail;
 
-        _gridSearchPoints.Remove(state.Player.ActualPos);
+        _gridSearchPoints.Remove(state.Player.Position);
         
         foreach (var viewPos in view)
         {
@@ -83,16 +84,16 @@ internal class Controller
         }
     }
 
-    private static HashSet<Vector2di> GetTileView(CommandState cl, out MultiMap<TileType, Vector2di> mapping)
+    private static HashSet<Vector2di> GetTileView(CommandState cl, out HashMultiMap<TileType, Vector2di> mapping)
     {
         var results = new HashSet<Vector2di>();
         var state = cl.Tail;
         var queue = new Queue<Vector2di>();
-        queue.Enqueue(state.Player.ActualPos);
+        queue.Enqueue(state.Player.Position);
 
         var directions = Enum.GetValues<Direction>();
 
-        mapping = new MultiMap<TileType, Vector2di>();
+        mapping = new HashMultiMap<TileType, Vector2di>();
 
         while (queue.Count > 0)
         {
@@ -107,7 +108,7 @@ internal class Controller
 
             foreach (var direction in directions)
             {
-                var targetPos = front + direction.Offset();
+                var targetPos = front + direction;
 
                 if (state.IsWithinBounds(targetPos) && state[targetPos] != TileType.Unknown)
                 {
@@ -188,7 +189,7 @@ internal class Controller
 
     private StepStatus StepTowards(CommandState cl, Vector2di target, bool useDigging = true)
     {
-        var playerPos = cl.Tail.Player.ActualPos;
+        var playerPos = cl.Tail.Player.Position;
 
         if (playerPos == target)
         {
@@ -238,7 +239,7 @@ internal class Controller
         return StepStatus.Running;
     }
 
-    private bool MineView(CommandState cl, MultiMap<TileType, Vector2di> mapping)
+    private bool MineView(CommandState cl, HashMultiMap<TileType, Vector2di> mapping)
     {
         var state = cl.Tail;
 
@@ -254,7 +255,7 @@ internal class Controller
             {
                 candidatesInView.Add((
                     targetType, 
-                    mapping[targetType].MinBy(p => Vector2di.DistanceSqr(p, state.Player.ActualPos))
+                    mapping[targetType].MinBy(p => Vector2di.DistanceSqr(p, state.Player.Position))
                 ));
             }
         }
@@ -270,7 +271,7 @@ internal class Controller
 
         bool HasMineTile() => minedTiles.Count < cl.MineCount;
 
-        foreach (var (neighborDir, neighborPos) in Enum.GetValues<Direction>().Select(d => (d, state.Player.ActualPos + d.Offset())))
+        foreach (var (neighborDir, neighborPos) in Enum.GetValues<Direction>().Select(d => (d, state.Player.Position + d)))
         {
             if (!HasMineTile())
             {
@@ -290,7 +291,7 @@ internal class Controller
             return true;
         }        
 
-        var target = candidatesInView.MinBy(c => Vector2di.DistanceSqr(c.pos, state.Player.ActualPos));
+        var target = candidatesInView.MinBy(c => Vector2di.DistanceSqr(c.pos, state.Player.Position));
 
         StepTowards(cl, target.pos, !Attack(cl));
 
@@ -306,7 +307,7 @@ internal class Controller
         {
             for (var dist = 1; dist <= state.Player.Attack; dist++)
             {
-                var p = state.Player.ActualPos + direction.Offset() * dist;
+                var p = state.Player.Position + direction.Step() * dist;
 
                 if (!state.IsWithinBounds(p))
                 {
@@ -329,7 +330,7 @@ internal class Controller
 
     public void Update(CommandState cl)
     {
-        Console.WriteLine($"Position: {cl.Tail.Player.ActualPos}");
+        Console.WriteLine($"Position: {cl.Tail.Player.Position}");
 
         Validate(cl);
 
@@ -379,7 +380,7 @@ internal class Controller
 
             if (!MineView(cl, viewMultimap))
             {
-                var targetLookpoint = _gridSearchPoints.MinBy(p => Vector2di.DistanceSqr(p, state.Player.ActualPos));
+                var targetLookpoint = _gridSearchPoints.MinBy(p => Vector2di.DistanceSqr(p, state.Player.Position));
 
                 if (StepTowards(cl, targetLookpoint, !Attack(cl)) == StepStatus.Failure)
                 {
@@ -404,7 +405,7 @@ internal class Controller
 
             if (StepTowards(cl, MapCenter, !attacked) == StepStatus.Failure)
             {
-                var dir = state.Player.ActualPos.DirectionTo(MapCenter);
+                var dir = state.Player.Position.DirectionTo(MapCenter);
                 
                 cl.Move(dir);
 

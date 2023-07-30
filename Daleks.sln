@@ -19,6 +19,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GameFramework.PostProcessin
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GameFramework.Utilities", "external\GraphicsFramework\GameFramework.Utilities\GameFramework.Utilities.csproj", "{EB220780-BF85-4521-8463-03569456E80E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Common", "Common\Common.csproj", "{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,14 @@ Global
 		{EB220780-BF85-4521-8463-03569456E80E}.Release|Any CPU.Build.0 = Release|Any CPU
 		{EB220780-BF85-4521-8463-03569456E80E}.Release|x64.ActiveCfg = Release|x64
 		{EB220780-BF85-4521-8463-03569456E80E}.Release|x64.Build.0 = Release|x64
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Debug|x64.Build.0 = Debug|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Release|x64.ActiveCfg = Release|Any CPU
+		{7C2362FB-CBEC-4A08-96EB-4E2E6559FBDA}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
