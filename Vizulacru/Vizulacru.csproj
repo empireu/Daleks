@@ -8,6 +8,36 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="Assets\Images\Tiles\Acid.png" />
+    <None Remove="Assets\Images\Tiles\Base.png" />
+    <None Remove="Assets\Images\Tiles\Bedrock.png" />
+    <None Remove="Assets\Images\Tiles\Cobblestone.png" />
+    <None Remove="Assets\Images\Tiles\Dirt.png" />
+    <None Remove="Assets\Images\Tiles\Iron.png" />
+    <None Remove="Assets\Images\Tiles\Osmium.png" />
+    <None Remove="Assets\Images\Tiles\Stone.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Images\Tiles\Acid.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Base.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Bedrock.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Cobblestone.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Dirt.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Iron.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Osmium.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Stone.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="7.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="7.0.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="7.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="4.2.0-dev-00918" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.1-dev-00947" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\external\GraphicsFramework\GameFramework.ImGui\GameFramework.ImGui.csproj" />
     <ProjectReference Include="..\external\GraphicsFramework\GameFramework.PostProcessing.Effects\GameFramework.PostProcessing.Effects.csproj" />
     <ProjectReference Include="..\external\GraphicsFramework\GameFramework.PostProcessing\GameFramework.PostProcessing.csproj" />
