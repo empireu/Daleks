@@ -21,4 +21,6 @@ public static class Extensions
         Direction.D => new Vector2di(0, 1),
         _ => throw new ArgumentOutOfRangeException(nameof(dir), dir, $"Unexpected direction {dir}")
     };
+
+    public static bool IsObstacle(this TileType type) => type == TileType.Bedrock;
 }

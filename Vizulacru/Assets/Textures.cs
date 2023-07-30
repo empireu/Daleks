@@ -14,6 +14,8 @@ internal sealed class Textures
     public readonly TextureSampler BedrockTile;
     public readonly TextureSampler AcidTile;
     public readonly TextureSampler BaseTile;
+    public readonly TextureSampler EnemyRobotTile;
+    public readonly TextureSampler PlayerRobotTile;
 
     public Textures(GameApplication app)
     {
@@ -27,5 +29,7 @@ internal sealed class Textures
         BedrockTile = Get("Images.Tiles.Bedrock.png");
         AcidTile = Get("Images.Tiles.Acid.png");
         BaseTile = Get("Images.Tiles.Base.png");
+        EnemyRobotTile = Get("Images.Tiles.Enemy.png");
+        PlayerRobotTile = Get("Images.Tiles.Player.png");
     }
 }

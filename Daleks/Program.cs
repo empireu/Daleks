@@ -6,72 +6,22 @@ var id = int.Parse(Console.ReadLine()!);
 
 const int rounds = 150;
 
-var round = 0;
-
-GameState ReadState()
-{
-    Console.WriteLine("Polling...");
-
-    var path = $"./game/s{id}_{round}.txt";
-
-    while (true)
-    {
-        try
-        {
-            var state = GameState.Load(File.ReadAllLines(path), round);
-            Console.WriteLine($"Read {round}");
-            return state;
-        }
-        catch (IOException)
-        {
-            Thread.Sleep(25);
-        }
-    }
-}
-
-void Submit(CommandState cl)
-{
-    var str = cl.Serialize();
-    File.WriteAllText($"./game/c{id}_{round}.txt", str);
-    
-    Console.WriteLine("Submitting...");
-
-    Console.WriteLine($"Moves: {string.Join(' ', cl.Moves)}");
-    if (cl.Moves.Count == 0)
-    {
-        Console.WriteLine("  N/A");
-    }
-
-    if (cl.HasAction)
-    {
-        Console.WriteLine($"Doing:");
-      
-        foreach (var actionCommand in cl.Actions)
-        {
-            Console.WriteLine($"  {actionCommand.Type} towards {actionCommand.Dir}");
-        }
-    }
-
-    if (cl.Upgrades.Count > 0)
-    {
-        Console.WriteLine($"Buying {string.Join(", ", cl.Upgrades)}");
-    }
-}
+var manager = new GameManager(id, rounds);
 
 Controller? controller = null;
 Vector2di? basePos = null;
 
 while (true)
 {
-    Console.WriteLine($"----- Round {round} -----");
+    Console.WriteLine($"----- Round {manager.Round} -----");
 
-    var state = ReadState();
+    var state = manager.Read();
 
     if (controller == null)
     {
-        Console.WriteLine($"Initializing game with grid of {state.GridSize}");
-        basePos = state.Player.Position;
-        controller = new Controller(state.GridSize, basePos.Value, rounds);
+        var match = manager.MatchInfo;
+        Console.WriteLine($"Initializing game with grid of {match.GridSize}");
+        controller = new Controller(match.GridSize, match.BasePosition, rounds);
     }
 
     var player = state.Player;
@@ -91,11 +41,10 @@ while (true)
                       $"  iron: {player.IronCount}\n" +
                       $"  osmium: {player.OsmiumCount}");
 
-    var cl = new CommandState(state, basePos!.Value);
+    var cl = new CommandState(state, manager.MatchInfo.BasePosition);
+    
     controller.Update(cl);
-    Submit(cl);
-
-    round++;
+    manager.Submit(cl);
 
     Console.WriteLine("------------------------\n\n\n");
 }
