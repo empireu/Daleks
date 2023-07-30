@@ -1,4 +1,7 @@
-﻿namespace Common;
+﻿using System.Drawing;
+using System.Numerics;
+
+namespace Common;
 
 public static class Extensions
 {
@@ -23,4 +26,6 @@ public static class Extensions
     };
 
     public static bool IsObstacle(this TileType type) => type == TileType.Bedrock;
+
+    public static bool Contains(this Rectangle rect, Vector2di p) => rect.Contains(p.X, p.Y);
 }

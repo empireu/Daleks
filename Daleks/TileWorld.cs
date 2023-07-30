@@ -4,17 +4,13 @@ using System.Runtime.CompilerServices;
 
 namespace Daleks;
 
-public sealed class World : IReadOnlyGrid<TileType>
+public sealed class TileWorld : IReadOnlyGrid<TileType>
 {
     private static readonly Vector2di[] NeighborOffsets = Enum.GetValues<Direction>().Select(x => x.Step()).ToArray();
-
-    public Vector2di Size { get; private set; }
-
-    public Grid<TileType> Tiles { get; }
-
+   
     private readonly Grid<AStarCell> _pathfindingGrid;
 
-    public World(Vector2di size)
+    public TileWorld(Vector2di size)
     {
         Size = size;
         Tiles = new Grid<TileType>(size);
@@ -23,7 +19,28 @@ public sealed class World : IReadOnlyGrid<TileType>
 
         _pathfindingGrid = new Grid<AStarCell>(size);
         ClearPathfindingData();
+
+        _unexploredTree = new BitQuadTree(Vector2di.Zero, Math.Max(size.X, size.Y));
+
+        // Very slow but we're doing it once
+
+        for (var y = 0; y < size.Y; y++)
+        {
+            for (var x = 0; x < size.X; x++)
+            {
+                _unexploredTree.Insert(new Vector2di(x, y));
+            }
+        }
     }
+    
+    public Vector2di Size { get; private set; }
+    public Grid<TileType> Tiles { get; }
+
+    private readonly BitQuadTree _unexploredTree;
+
+    public int UnexploredTreeVersion { get; private set; }
+
+    public IQuadTreeView UnexploredTree => _unexploredTree;
 
     private void ClearPathfindingData()
     {
@@ -135,6 +152,67 @@ public sealed class World : IReadOnlyGrid<TileType>
         return false;
     }
 
+    public TileType this[int x, int y] => Tiles[x, y];
+
+    public bool IsWithinBounds(int x, int y) => Tiles.IsWithinBounds(x, y);
+
+    public bool SetExplored(Vector2di v)
+    {
+        if (_unexploredTree.Remove(v))
+        {
+            UnexploredTreeVersion++;
+            return true;
+        }
+
+        return false;
+    }
+
+    public IQuadTreeView? GetUnexploredRegion(Vector2di position) => GetUnexploredRegionCore(_unexploredTree, position);
+
+    private IQuadTreeView? GetUnexploredRegionCore(BitQuadTree node, Vector2di position)
+    {
+        while (true)
+        {
+            if (node.IsFilled || node.Size == 1)
+            {
+                return node;
+            }
+
+            var bestChild = node.GetChild(position);
+
+            if (bestChild == null)
+            {
+                var bestCost = int.MaxValue;
+
+                for (byte i = 0; i < 4; i++)
+                {
+                    var child = node.GetChild((BitQuadTree.Quadrant)i);
+
+                    if (child == null)
+                    {
+                        continue;
+                    }
+
+                    var actualCost = Vector2di.DistanceSqr(child.Position, position);
+
+                    if (actualCost < bestCost)
+                    {
+                        bestCost = actualCost;
+                        bestChild = child;
+                    }
+                }
+
+            }
+
+            if (bestChild == null)
+            {
+                return null;
+            }
+
+            node = bestChild;
+        }
+    }
+
     private struct AStarCell
     {
         public float GCost;
@@ -150,8 +228,4 @@ public sealed class World : IReadOnlyGrid<TileType>
             FCost = fCost;
         }
     }
-
-    public TileType this[int x, int y] => Tiles[x, y];
-
-    public bool IsWithinBounds(int x, int y) => Tiles.IsWithinBounds(x, y);
 }

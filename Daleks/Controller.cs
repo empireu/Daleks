@@ -3,6 +3,36 @@ using Common;
 
 namespace Daleks;
 
+public sealed class BotConfig
+{
+    public float IronMultiplier = 1;
+    public float OsmiumMultiplier = 5;
+}
+
+internal class Controller2
+{
+    public BotConfig Config { get; }
+    public MatchInfo Match { get; }
+    public int AcidRounds { get; }
+    
+    public TileWorld TileWorld { get; }
+
+    // Tiles that were discovered at some point
+    public readonly HashSet<Vector2di> DiscoveredTiles = new();
+
+    // Ores that were viewed at some point. They are removed once mined or if their existence conflicts with an up-to-date observation
+    // (this happens if they were mined by some other player or were destroyed by acid)
+    public readonly Dictionary<Vector2di, TileType> PendingOres = new();
+
+    public Controller2(MatchInfo match, int acidRounds, BotConfig config)
+    {
+        Config = config;
+        Match = match;
+        AcidRounds = acidRounds;
+        TileWorld = new TileWorld(match.GridSize);
+    }
+}
+
 internal class Controller
 {
     private const int GridSearchGranularity = 7;
