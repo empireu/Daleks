@@ -1,10 +1,9 @@
 ﻿using Daleks;
 
-Console.Write("Id: ");
+Console.Write("ID: ");
 var id = int.Parse(Console.ReadLine()!);
 
-Console.Write("\nRounds (500): ");
-var rounds = int.TryParse(Console.ReadLine(), out var i) ? i : 500;
+var rounds = 150;
 
 var round = 0;
 

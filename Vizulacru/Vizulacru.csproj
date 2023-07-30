@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\external\GraphicsFramework\GameFramework.ImGui\GameFramework.ImGui.csproj" />
+    <ProjectReference Include="..\external\GraphicsFramework\GameFramework.PostProcessing.Effects\GameFramework.PostProcessing.Effects.csproj" />
+    <ProjectReference Include="..\external\GraphicsFramework\GameFramework.PostProcessing\GameFramework.PostProcessing.csproj" />
+    <ProjectReference Include="..\external\GraphicsFramework\GameFramework.Utilities\GameFramework.Utilities.csproj" />
+    <ProjectReference Include="..\external\GraphicsFramework\GameFramework\GameFramework.csproj" />
+  </ItemGroup>
+
+</Project>
