@@ -1,4 +1,5 @@
-﻿using Daleks;
+﻿using Common;
+using Daleks;
 
 Console.Write("ID: ");
 var id = int.Parse(Console.ReadLine()!);
@@ -58,6 +59,7 @@ void Submit(CommandState cl)
 }
 
 Controller? controller = null;
+Vector2di? basePos = null;
 
 while (true)
 {
@@ -68,7 +70,8 @@ while (true)
     if (controller == null)
     {
         Console.WriteLine($"Initializing game with grid of {state.GridSize}");
-        controller = new Controller(state.GridSize, state.Player.Position, rounds);
+        basePos = state.Player.Position;
+        controller = new Controller(state.GridSize, basePos.Value, rounds);
     }
 
     var player = state.Player;
@@ -80,7 +83,7 @@ while (true)
                       $"  dig: {player.Dig}\n" +
                       $"  attack: {player.Attack}\n" +
                       $"  movement: {player.Movement}\n" +
-                      $"  vision: {player.Vision}\n" +
+                      $"  vision: {player.Sight}\n" +
                       $"  antenna: {(player.HasAntenna ? "yes" : "no")}\n" +
                       $"  battery: {(player.HasBattery ? "yes" : "no")}");
     Console.WriteLine("Inventory:\n" +
@@ -88,7 +91,7 @@ while (true)
                       $"  iron: {player.IronCount}\n" +
                       $"  osmium: {player.OsmiumCount}");
 
-    var cl = new CommandState(state);
+    var cl = new CommandState(state, basePos!.Value);
     controller.Update(cl);
     Submit(cl);
 

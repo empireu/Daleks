@@ -269,7 +269,7 @@ internal class Controller
 
         var minedTiles = new HashSet<Direction>();
 
-        bool HasMineTile() => minedTiles.Count < cl.MineCount;
+        bool HasMineTile() => minedTiles.Count < cl.Head.Player.Dig;
 
         foreach (var (neighborDir, neighborPos) in Enum.GetValues<Direction>().Select(d => (d, state.Player.Position + d)))
         {
@@ -286,8 +286,13 @@ internal class Controller
 
         if (minedTiles.Count > 0)
         {
-            cl.Mine(minedTiles);
+            foreach (var direction in minedTiles)
+            {
+                cl.Mine(direction);
+            }
+
             Console.WriteLine("MINING...");
+            
             return true;
         }        
 
@@ -366,7 +371,7 @@ internal class Controller
         {
             Console.WriteLine("FARMING...\n");
 
-            if (!state.Player.HasBattery && cl.CanBuyBattery)
+            if (!state.Player.HasBattery && cl.CouldBuyBattery)
             {
                 Console.WriteLine("Buying battery...");
 

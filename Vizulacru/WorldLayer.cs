@@ -5,7 +5,6 @@ using GameFramework.Extensions;
 using GameFramework.ImGui;
 using GameFramework.Layers;
 using GameFramework.PostProcessing;
-using GameFramework.Renderer;
 using GameFramework.Renderer.Batch;
 using GameFramework.Scene;
 using Veldrid;

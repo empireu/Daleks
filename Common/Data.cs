@@ -1,6 +1,14 @@
 ﻿namespace Common;
 
-public class Grid<T>
+public interface IReadOnlyGrid<out T>
+{
+    T this[int x, int y] { get; }
+    T this[Vector2di v] => this[v.X, v.Y];
+    bool IsWithinBounds(int x, int y);
+    bool IsWithinBounds(Vector2di v) => IsWithinBounds(v.X, v.Y);
+}
+
+public class Grid<T> : IReadOnlyGrid<T>
 {
     public T[] Storage { get; }
 
@@ -14,9 +22,15 @@ public class Grid<T>
 
     public Grid(Vector2di size) : this(new T[size.X * size.Y], size) { }
 
-    public ref T this[int x, int y] => ref Storage[y * Size.X + x];
+    private ref T Get(int x, int y) => ref Storage[y * Size.X + x];
 
-    public ref T this[Vector2di v] => ref this[v.X, v.Y];
+    public ref T this[int x, int y] => ref Get(x, y);
+
+    public ref T this[Vector2di v] => ref Get(v.X, v.Y);
+
+    T IReadOnlyGrid<T>.this[int x, int y] => Get(x, y);
+
+    T IReadOnlyGrid<T>.this[Vector2di v] => Get(v.X, v.Y);
 
     public bool IsWithinBounds(int x, int y) => x >= 0 && x < Size.X && y >= 0 && y < Size.Y;
     

@@ -16,6 +16,7 @@
     <None Remove="Assets\Images\Tiles\Iron.png" />
     <None Remove="Assets\Images\Tiles\Osmium.png" />
     <None Remove="Assets\Images\Tiles\Stone.png" />
+    <None Remove="Assets\Images\Tiles\Unknown.png" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,6 +28,7 @@
     <EmbeddedResource Include="Assets\Images\Tiles\Iron.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Osmium.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Stone.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Unknown.png" />
   </ItemGroup>
 
   <ItemGroup>
@@ -38,6 +40,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Common\Common.csproj" />
     <ProjectReference Include="..\external\GraphicsFramework\GameFramework.ImGui\GameFramework.ImGui.csproj" />
     <ProjectReference Include="..\external\GraphicsFramework\GameFramework.PostProcessing.Effects\GameFramework.PostProcessing.Effects.csproj" />
     <ProjectReference Include="..\external\GraphicsFramework\GameFramework.PostProcessing\GameFramework.PostProcessing.csproj" />
