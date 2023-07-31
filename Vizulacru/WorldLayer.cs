@@ -1,6 +1,8 @@
-﻿using System.Drawing;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Drawing;
 using GameFramework;
 using System.Numerics;
+using System.Threading.Channels;
 using Common;
 using Daleks;
 using GameFramework.Extensions;
@@ -10,8 +12,10 @@ using GameFramework.PostProcessing;
 using GameFramework.Renderer;
 using GameFramework.Renderer.Batch;
 using GameFramework.Scene;
+using GameFramework.Utilities;
 using GameFramework.Utilities.Extensions;
 using ImGuiNET;
+using Microsoft.Extensions.Logging;
 using Veldrid;
 using Vizulacru.Assets;
 
@@ -97,6 +101,98 @@ internal sealed class UnexploredTreeRenderer
     }
 }
 
+internal sealed class RemoteGame : IDisposable
+{
+    private readonly ILogger<RemoteGame> _logger;
+    public int Id { get; }
+    public int AcidRounds { get; }
+    public Task PollTask { get; }
+
+    private readonly CancellationTokenSource _cts = new();
+
+    private MatchInfo? _matchInfo;
+
+    public MatchInfo Match => _matchInfo ?? throw new InvalidOperationException("Match not initialized");
+
+    private readonly Channel<GameSnapshot> _gameChannel = Channel.CreateBounded<GameSnapshot>(new BoundedChannelOptions(1)
+    {
+        FullMode = BoundedChannelFullMode.Wait,
+        SingleWriter = true,
+        SingleReader = true
+    });
+
+    private readonly Channel<CommandState> _commandChannel = Channel.CreateBounded<CommandState>(new BoundedChannelOptions(1)
+    {
+        FullMode = BoundedChannelFullMode.Wait,
+        SingleWriter = true,
+        SingleReader = true
+    });
+
+    public RemoteGame(ILogger<RemoteGame> logger, int id, int acidRounds)
+    {
+        _logger = logger;
+        Id = id;
+        AcidRounds = acidRounds;
+        PollTask = PollAndPostAsync();
+    }
+
+    private async Task PollAndPostAsync()
+    {
+        var manager = new GameManager(Id, AcidRounds);
+
+        try
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                var state = await manager.ReadAsync(_cts.Token);
+
+                if (state == null)
+                {
+                    await Task.Delay(5, _cts.Token);
+                    continue;
+                }
+
+                _matchInfo ??= manager.MatchInfo;
+
+                await _gameChannel.Writer.WriteAsync(state, _cts.Token);
+
+                var command = await _commandChannel.Reader.ReadAsync(_cts.Token);
+
+                await manager.SubmitAsync(command, _cts.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignored
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical("Polling ex: {ex}", ex);
+            Assert.Fail($"Unexpected polling exception: {ex}");
+            // problem
+        }
+    }
+
+    public bool TryRead([NotNullWhen(true)] out GameSnapshot? state) => _gameChannel.Reader.TryRead(out state);
+
+    public void Submit(CommandState state)
+    {
+        if (!_commandChannel.Writer.TryWrite(state))
+        {
+            // Should complete (AI logic must post after a state was read, which happens after commands are submitted)
+
+            throw new InvalidOperationException("Tried to post commands in an illegal fashion"); // nice message, i guess
+        }        
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+        PollTask.Wait();
+    }
+}
+
 internal sealed class WorldLayer : Layer, IDisposable
 {
     private const float MinZoom = 1.0f;
@@ -109,52 +205,61 @@ internal sealed class WorldLayer : Layer, IDisposable
     private readonly App _app;
     private readonly ImGuiLayer _imGui;
     private readonly Textures _textures;
-    private readonly OrthographicCameraController2D _controller;
+    private readonly OrthographicCameraController2D _cameraController;
 
     private readonly QuadBatch _dynamicBatch;
     private readonly QuadBatch _unexploredTreeBatch;
-    private readonly UnexploredTreeRenderer _unexploredTreeRenderer;
+    private UnexploredTreeRenderer? _unexploredTreeRenderer;
 
     private bool _renderUnexploredTree = true;
+    private bool _renderUnexploredRegion = true;
 
     private readonly PostProcessor _postProcess;
     private bool _dragCamera;
 
-    private readonly TileWorld _tileWorld = new TileWorld(new Vector2di(64, 64)).Also(w =>
-    {
-        for (var i = 0; i < w.Size.X; i++)
-        {
-            for (var j = 0; j < w.Size.Y; j++)
-            {
-                if (Random.Shared.NextDouble() > 0.9)
-                {
-                    w.Tiles[i, j] = TileType.Bedrock;
-                }
-            }
-        }
-    });
+    private readonly RemoteGame _game;
+    private Controller2? _controller;
+    private GameSnapshot? _lastGameState;
 
-    private Vector2di MouseGrid => _controller.Camera
-        .MouseToWorld2D(_app.Input.MousePosition, _app.Window.Width, _app.Window.Height).Map(mouseWorld =>
-            new Vector2di(
-                Math.Clamp((int)Math.Round(mouseWorld.X), 0, _tileWorld.Size.X - 1),
-                Math.Clamp(-(int)Math.Round(mouseWorld.Y), 0, _tileWorld.Size.Y - 1)
-            )
-        );
+    private Vector2di MouseGrid
+    {
+        get
+        {
+            if (_controller == null)
+            {
+                return Vector2di.Zero;
+            }
+
+            return _cameraController.Camera
+                .MouseToWorld2D(_app.Input.MousePosition, _app.Window.Width, _app.Window.Height).Map(mouseWorld =>
+                    new Vector2di(
+                        Math.Clamp((int)Math.Round(mouseWorld.X), 0, _controller.TileWorld.Size.X - 1),
+                        Math.Clamp(-(int)Math.Round(mouseWorld.Y), 0, _controller.TileWorld.Size.Y - 1)
+                    )
+                );
+        }
+    }
 
     private void FocusCenter()
     {
-        _controller.FuturePosition2 = GridPos(_tileWorld.Size.X / 2, _tileWorld.Size.Y / 2);
-        _controller.FutureZoom = 35f;
+        if (_controller == null)
+        {
+            return;
+        }
+
+        var world = _controller.TileWorld;
+
+        _cameraController.FuturePosition2 = GridPos(world.Size.X / 2, world.Size.Y / 2);
+        _cameraController.FutureZoom = 35f;
     }
 
-    public WorldLayer(App app, ImGuiLayer imGui, Textures textures)
+    public WorldLayer(App app, ImGuiLayer imGui, Textures textures, ILogger<RemoteGame> remoteGameLogger)
     {
         _app = app;
         _imGui = imGui;
         _textures = textures;
 
-        _controller = new OrthographicCameraController2D(
+        _cameraController = new OrthographicCameraController2D(
             new OrthographicCamera(0, -1, 1),
             translationInterpolate: 25f,
             zoomInterpolate: 10f
@@ -162,7 +267,6 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         _dynamicBatch = app.Resources.BatchPool.Get();
         _unexploredTreeBatch = app.Resources.BatchPool.Get();
-        _unexploredTreeRenderer = new UnexploredTreeRenderer(_tileWorld, _unexploredTreeBatch);
 
         _postProcess = new PostProcessor(app)
         {
@@ -170,17 +274,59 @@ internal sealed class WorldLayer : Layer, IDisposable
         };
 
         UpdatePipelines();
-
         FocusCenter();
+
+        _game = new RemoteGame(remoteGameLogger, app.SelectedId, 150);
 
         _imGui.Submit += ImGuiOnSubmit;
     }
 
     private void ImGuiOnSubmit(ImGuiRenderer obj)
     {
-        if (ImGui.Begin("Display"))
+        ImGui.DockSpaceOverViewport(ImGui.GetMainViewport(), ImGuiDockNodeFlags.PassthruCentralNode);
+
+        try
+        {
+            if (ImGui.BeginMainMenuBar())
+            {
+                if (ImGui.Button("Exit"))
+                {
+                    _app.Layers.RemoveLayer(this);
+
+                    Dispose();
+                }
+            }
+        }
+        finally
+        {
+            ImGui.EndMainMenuBar();
+        }
+
+        const string id = "WorldLayer";
+
+        bool Begin(string title) => ImGuiExt.Begin(title, id);
+
+        if (Begin("Display"))
         {
             ImGui.Checkbox("Show unexplored regions", ref _renderUnexploredTree);
+            ImGui.Checkbox("Show unexplored target", ref _renderUnexploredRegion);
+        }
+
+        ImGui.End();
+
+        var mouse = MouseGrid;
+
+        if (Begin("Tiles"))
+        {
+            ImGui.Text($"Mouse: {mouse}");
+
+            if (_controller != null)
+            {
+                var world = _controller.TileWorld;
+
+                ImGui.Text($"Grid size: {world.Size}");
+                ImGui.Text($"Selected: {world[mouse.X, mouse.Y]}");
+            }
         }
 
         ImGui.End();
@@ -202,11 +348,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         {
             _dragCamera = false;
         }
-        else if (@event is { MouseButton: MouseButton.Left, Down: false })
-        {
-            _tileWorld.SetExplored(MouseGrid);
-        }
-        
+
         return true;
     }
    
@@ -222,7 +364,7 @@ internal sealed class WorldLayer : Layer, IDisposable
 
     private void UpdatePipelines()
     {
-        _controller.Camera.AspectRatio = _app.Window.Width / (float)_app.Window.Height;
+        _cameraController.Camera.AspectRatio = _app.Window.Width / (float)_app.Window.Height;
 
         _postProcess.ResizeInputs(_app.Window.Size() * 2);
         _postProcess.SetOutput(_app.Device.SwapchainFramebuffer);
@@ -243,15 +385,33 @@ internal sealed class WorldLayer : Layer, IDisposable
         {
             if (_dragCamera)
             {
-                var delta = (_app.Input.MouseDelta / new Vector2(_app.Window.Width, _app.Window.Height)) * new Vector2(-1, 1) * _controller.Camera.Zoom * CamDragSpeed;
-                _controller.FuturePosition2 += delta;
+                var delta = (_app.Input.MouseDelta / new Vector2(_app.Window.Width, _app.Window.Height)) * new Vector2(-1, 1) * _cameraController.Camera.Zoom * CamDragSpeed;
+                _cameraController.FuturePosition2 += delta;
             }
 
-            _controller.FutureZoom += _app.Input.ScrollDelta * CamZoomSpeed * frameInfo.DeltaTime;
-            _controller.FutureZoom = Math.Clamp(_controller.FutureZoom, MinZoom, MaxZoom);
+            _cameraController.FutureZoom += _app.Input.ScrollDelta * CamZoomSpeed * frameInfo.DeltaTime;
+            _cameraController.FutureZoom = Math.Clamp(_cameraController.FutureZoom, MinZoom, MaxZoom);
         }
 
-        _controller.Update(frameInfo.DeltaTime);
+        _cameraController.Update(frameInfo.DeltaTime);
+    }
+
+    private void UpdateGame()
+    {
+        if (!_game.TryRead(out var state))
+        {
+            return;
+        }
+
+        _controller ??= new Controller2(_game.Match, _game.AcidRounds, new BotConfig());
+
+        var cl = new CommandState(state, _game.Match.BasePosition);
+
+        _controller.Update(cl);
+
+        _game.Submit(cl);
+
+        _lastGameState = state;
     }
 
     protected override void Update(FrameInfo frameInfo)
@@ -259,6 +419,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         base.Update(frameInfo);
 
         UpdateCamera(frameInfo);
+        UpdateGame();
     }
 
     private static Vector2 GridPos(Vector2di pos) => new(pos.X, -pos.Y);
@@ -271,15 +432,23 @@ internal sealed class WorldLayer : Layer, IDisposable
 
     private void RenderTerrain()
     {
+        if (_controller == null)
+        {
+            return;
+        }
+
+        var world = _controller.TileWorld;
+        var playerPos = Assert.NotNull(_lastGameState).Player.Position;
+
         var unknownColor = new RgbaFloat4(18 / 255f, 18 / 255f, 18 / 255f, 1f);
 
         var scale = TileScale;
 
-        for (var y = 0; y < _tileWorld.Size.Y; y++)
+        for (var y = 0; y < world.Size.Y; y++)
         {
-            for (var x = 0; x < _tileWorld.Size.X; x++)
+            for (var x = 0; x < world.Size.X; x++)
             {
-                var type = _tileWorld[x, y];
+                var type = world[x, y];
                 var pos = GridPos(x, y);
 
                 if (type == TileType.Unknown)
@@ -298,7 +467,7 @@ internal sealed class WorldLayer : Layer, IDisposable
                         TileType.Osmium => _textures.OsmiumTile,
                         TileType.Base => _textures.BaseTile,
                         TileType.Acid => _textures.AcidTile,
-                        TileType.Robot => _textures.EnemyRobotTile,
+                        TileType.Robot => (playerPos.X == x && playerPos.Y == y) ? _textures.PlayerRobotTile : _textures.EnemyRobotTile,
                         _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown texture for {type}")
                     });
                 }
@@ -306,11 +475,30 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
-    private readonly Dictionary<Vector2di, Vector4> _nodeColors = new();
+    private void RenderView()
+    {
+        if (_lastGameState == null)
+        {
+            return;
+        }
+
+        foreach (var discoveredTile in _lastGameState.DiscoveredTiles)
+        {
+            _dynamicBatch.Quad(GridPos(discoveredTile), TileScale, new RgbaFloat4(0f, 0f, 1f, 0.2f));
+        }
+    }
+
+    private void RenderUnexploredTarget()
+    {
+        if (_controller is { UnexploredRegion: not null })
+        {
+            _dynamicBatch.Quad(GridPos(_controller.UnexploredRegion.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.3f));
+        }
+    }
 
     protected override void Render(FrameInfo frameInfo)
     {
-        _dynamicBatch.Effects = QuadBatchEffects.Transformed(_controller.Camera.CameraMatrix);
+        _dynamicBatch.Effects = QuadBatchEffects.Transformed(_cameraController.Camera.CameraMatrix);
         
         _postProcess.ClearColor();
 
@@ -322,23 +510,39 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
 
         RenderPass(RenderTerrain);
+        RenderPass(RenderView);
 
-        if (_renderUnexploredTree)
+        if (_renderUnexploredTree && _controller != null)
         {
+            _unexploredTreeRenderer ??= new UnexploredTreeRenderer(_controller.TileWorld, _unexploredTreeBatch);
             _unexploredTreeRenderer.Update();
-            _unexploredTreeBatch.Effects = QuadBatchEffects.Transformed(_controller.Camera.CameraMatrix);
+            _unexploredTreeBatch.Effects = QuadBatchEffects.Transformed(_cameraController.Camera.CameraMatrix);
             _unexploredTreeBatch.Submit(framebuffer: _postProcess.InputFramebuffer);
         }
+
+        RenderPass(RenderUnexploredTarget);
 
         RenderPass(RenderHighlight);
 
         _postProcess.Render();
     }
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _imGui.Submit -= ImGuiOnSubmit;
+
+        _disposed = true;
+
         _app.Resources.BatchPool.Return(_dynamicBatch);
         _app.Resources.BatchPool.Return(_unexploredTreeBatch);
         _postProcess.Dispose();
+        _game.Dispose();
     }
 }

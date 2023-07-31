@@ -1,8 +1,6 @@
-﻿using System.Diagnostics;
-using GameFramework;
+﻿using GameFramework;
 using GameFramework.Assets;
 using GameFramework.ImGui;
-using GameFramework.Layers;
 using ImGuiNET;
 using Microsoft.Extensions.DependencyInjection;
 using Veldrid;
@@ -12,6 +10,9 @@ namespace Vizulacru;
 internal sealed class App : GameApplication
 {
     private readonly IServiceProvider _serviceProvider;
+    private int _selectedId;
+
+    public int SelectedId => _selectedId;
 
     public App(IServiceProvider serviceProvider)
     {
@@ -35,19 +36,27 @@ internal sealed class App : GameApplication
             var io = ImGui.GetIO();
             io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
             ImGuiStyles.Dark();
-
-            ImGui.LoadIniSettingsFromDisk("imgui.ini");
-
+            ImGui.LoadIniSettingsFromDisk("imgui_vizulacru.ini");
             imGui.Submit += ImGuiOnSubmit;
-            imGui.EnableStats = true;
         });
-
-        Layers.ConstructLayer<WorldLayer>();
     }
 
     private void ImGuiOnSubmit(ImGuiRenderer obj)
     {
-        ImGui.ShowDemoWindow();
+        if (!Layers.FrontToBack.Any(t => t is WorldLayer))
+        {
+            if (ImGuiExt.Begin("App", "Session"))
+            {
+                ImGui.SliderInt("ID", ref _selectedId, 0, 5);
+            }
+
+            if (ImGui.Button("Start"))
+            {
+                Layers.AddLayer(ActivatorUtilities.CreateInstance<WorldLayer>(_serviceProvider));
+            }
+
+            ImGui.End();
+        }
     }
 
     public static EmbeddedResourceKey Asset(string name)

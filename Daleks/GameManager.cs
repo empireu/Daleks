@@ -1,4 +1,5 @@
 ﻿using Common;
+using System.IO;
 
 namespace Daleks;
 
@@ -26,30 +27,59 @@ public class GameManager
         AcidRounds = acidRounds;
     }
 
+    public GameSnapshot? Read()
+    {
+        try
+        {
+            return GameSnapshot.Load(File.ReadAllLines($"./game/s{Id}_{Round}.txt"), Round).Also(state =>
+            {
+                _match ??= new MatchInfo
+                {
+                    BasePosition = state.Player.Position,
+                    GridSize = state.GridSize
+                };
+            });
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    public async Task<GameSnapshot?> ReadAsync(CancellationToken token = default)
+    {
+        try
+        {
+            return GameSnapshot.Load(await File.ReadAllLinesAsync($"./game/s{Id}_{Round}.txt", token), Round).Also(state =>
+            {
+                _match ??= new MatchInfo
+                {
+                    BasePosition = state.Player.Position,
+                    GridSize = state.GridSize
+                };
+            });
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     ///     Polls the current state from the simulator and initializes <see cref="MatchInfo"/>, if on the first round.
     /// </summary>
-    public GameState Read()
+    public GameSnapshot Poll()
     {
-        var path = $"./game/s{Id}_{Round}.txt";
-
         while (true)
         {
-            try
+            var state = Read();
+
+            if (state != null)
             {
-                return GameState.Load(File.ReadAllLines(path), Round).Also(state =>
-                {
-                    _match ??= new MatchInfo
-                    {
-                        BasePosition = state.Player.Position,
-                        GridSize = state.GridSize
-                    };
-                });
+                return state;
             }
-            catch (IOException)
-            {
-                Thread.Sleep(10);
-            }
+
+            Thread.Sleep(10);
         }
     }
 
@@ -60,6 +90,13 @@ public class GameManager
     {
         var str = cl.Serialize();
         File.WriteAllText($"./game/c{Id}_{Round}.txt", str);
+        Round++;
+    }
+
+    public async Task SubmitAsync(CommandState cl, CancellationToken token = default)
+    {
+        var str = cl.Serialize();
+        await File.WriteAllTextAsync($"./game/c{Id}_{Round}.txt", str, token);
         Round++;
     }
 }

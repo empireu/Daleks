@@ -24,7 +24,6 @@ using var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<App>();
         services.AddSingleton<Textures>();
         services.AddSingleton<GameApplication>(s => s.GetRequiredService<App>());
-        services.AddSingleton<WorldLayer>();
     })
     .Build();
 

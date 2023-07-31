@@ -39,25 +39,27 @@ public sealed class CommandState
 {
     public Vector2di BasePosition { get; }
 
-    public CommandState(GameState headState, Vector2di basePosition)
+    public CommandState(GameSnapshot headSnapshot, Vector2di basePosition)
     {
         BasePosition = basePosition;
-        _states = new List<GameState> { headState };
+        _states = new List<GameSnapshot> { headSnapshot };
     }
 
     private readonly List<ActionCommand> _actions = new();
     private readonly List<Direction> _moves = new();
     private readonly List<BuyType> _upgrades = new();
-    private readonly List<GameState> _states;
+    private readonly List<GameSnapshot> _states;
 
     public IReadOnlyList<ActionCommand> Actions => _actions;
     public IReadOnlyList<Direction> Moves => _moves;
     public IReadOnlyList<BuyType> Upgrades => _upgrades;
-    public IReadOnlyList<GameState> States => _states;
+    public IReadOnlyList<GameSnapshot> States => _states;
 
-    public GameState Head => _states.First();
+    public GameSnapshot Head => _states.First();
 
-    public GameState Tail => _states.Last();
+    public GameSnapshot Tail => _states.Last();
+    public IReadOnlySet<Vector2di> DiscoveredTiles => Head.DiscoveredTiles;
+    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTileTypes => Head.DiscoveredTileTypes;
 
     public bool HasAction => _actions.Any();
 
@@ -298,7 +300,7 @@ public sealed class CommandState
         return false;
     }
 
-    private void PushState(GameState state) => _states.Add(state);
+    private void PushState(GameSnapshot snapshot) => _states.Add(snapshot);
 
     private void PushState(Func<Player, Player> transform) => PushState(Tail.Bind(transform(Tail.Player)));
 
@@ -411,6 +413,7 @@ public enum ActionType
 
 public enum TileType
 {
+    Unknown,
     Dirt,
     Stone,
     Cobblestone,
@@ -419,27 +422,33 @@ public enum TileType
     Osmium,
     Base,
     Acid,
-    Unknown,
     Robot
 }
 
-public sealed class GameState
+public sealed class GameSnapshot
 {
     public int Round { get; }
 
     private readonly Grid<TileType> _grid;
+    private readonly HashSet<Vector2di> _discoveredTiles = new();
+    private readonly HashMultiMap<TileType, Vector2di> _discoveredTileTypes = new();
 
     public IReadOnlyGrid<TileType> Grid => _grid;
 
     public Vector2di GridSize => _grid.Size;
 
-    private GameState(Grid<TileType> grid, int round)
+    public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
+    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTileTypes => _discoveredTileTypes;
+
+    private GameSnapshot(Grid<TileType> grid, int round, HashSet<Vector2di> discoveredTiles, HashMultiMap<TileType, Vector2di> discoveredTileTypes)
     {
         _grid = grid;
+        _discoveredTiles = discoveredTiles;
+        _discoveredTileTypes = discoveredTileTypes;
         Round = round;
     }
 
-    private GameState(Vector2di gridSize, int round)
+    private GameSnapshot(Vector2di gridSize, int round)
     {
         _grid = new Grid<TileType>(gridSize);
         Round = round;
@@ -466,10 +475,10 @@ public sealed class GameState
     public bool IsWithinBounds(int x, int y) => _grid.IsWithinBounds(x, y);
     public bool IsWithinBounds(Vector2di v) => _grid.IsWithinBounds(v);
 
-    public static GameState Load(Span<string> lines, int round)
+    public static GameSnapshot Load(Span<string> lines, int round)
     {
         var size = PopTuple(ref lines);
-        var state = new GameState(size, round);
+        var state = new GameSnapshot(size, round);
 
         for (var y = 0; y < size.Y; y++)
         {
@@ -517,16 +526,48 @@ public sealed class GameState
             OsmiumCount = int.Parse(inventoryTokens[2])
         };
 
+        state.ViewScan();
+
         return state;
     }
 
-    public GameState Bind(Player player)
+    public GameSnapshot Bind(Player player)
     {
-        return new GameState(_grid, Round)
+        return new GameSnapshot(_grid, Round, _discoveredTiles, _discoveredTileTypes)
         {
             Player = player
         };
     }
 
     public TileType Neighbor(Direction dir) => this[Player.Position + dir]; // Bedrock will not allow going out of bounds
+
+    private void ViewScan()
+    {
+        var queue = new Queue<Vector2di>();
+        queue.Enqueue(Player.Position);
+
+        while (queue.Count > 0)
+        {
+            var front = queue.Dequeue();
+
+            if (!_discoveredTiles.Add(front))
+            {
+                continue;
+            }
+
+            _discoveredTileTypes.Add(this[front], front);
+
+            for (byte i = 0; i < 4; i++)
+            {
+                var direction = (Direction)i;
+
+                var targetPos = front + direction;
+
+                if (IsWithinBounds(targetPos) && this[targetPos] != TileType.Unknown)
+                {
+                    queue.Enqueue(targetPos);
+                }
+            }
+        }
+    }
 }

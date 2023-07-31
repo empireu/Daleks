@@ -7,9 +7,10 @@ public sealed class BotConfig
 {
     public float IronMultiplier = 1;
     public float OsmiumMultiplier = 5;
+    public Dictionary<TileType, float> CostMap = new();
 }
 
-internal class Controller2
+public sealed class Controller2
 {
     public BotConfig Config { get; }
     public MatchInfo Match { get; }
@@ -24,12 +25,54 @@ internal class Controller2
     // (this happens if they were mined by some other player or were destroyed by acid)
     public readonly Dictionary<Vector2di, TileType> PendingOres = new();
 
+    public Vector2di? UnexploredRegion { get; private set; }
+
     public Controller2(MatchInfo match, int acidRounds, BotConfig config)
     {
         Config = config;
         Match = match;
         AcidRounds = acidRounds;
-        TileWorld = new TileWorld(match.GridSize);
+        TileWorld = new TileWorld(match.GridSize, config.CostMap);
+    }
+
+    private void UpdateTiles(CommandState cl)
+    {
+        foreach (var discoveredTile in cl.DiscoveredTiles)
+        {
+            TileWorld.Tiles[discoveredTile] = cl.Tail[discoveredTile];
+            TileWorld.SetExplored(discoveredTile);
+        }
+    }
+
+    public void Update(CommandState cl)
+    {
+        UpdateTiles(cl);
+
+        var playerPos = cl.Head.Player.Position;
+
+        var x = TileWorld.GetUnexploredRegion(playerPos);
+
+        if (x != null)
+        {
+            UnexploredRegion = x.Position + new Vector2di(x.Size / 2, x.Size / 2);
+            if (TileWorld.TryFindPath(playerPos, UnexploredRegion.Value,
+                    out var path))
+            {
+                var next = path[1];
+
+                if (next != playerPos)
+                {
+                    var dir = playerPos.DirectionTo(next);
+
+                    cl.Move(dir);
+                    cl.Mine(dir);
+                }
+            }
+        }
+        else
+        {
+            UnexploredRegion = null;
+        }
     }
 }
 
@@ -152,7 +195,7 @@ internal class Controller
 
     private (Vector2di, List<Vector2di>)? _lastPath;
 
-    private static List<Vector2di>? FindPath(Vector2di start, Vector2di end, GameState state)
+    private static List<Vector2di>? FindPath(Vector2di start, Vector2di end, GameSnapshot snapshot)
     {
         var queue = new PriorityQueue<List<Vector2di>, int>();
 
@@ -183,12 +226,12 @@ internal class Controller
             {
                 var neighbor = back + direction;
 
-                if (!state.IsWithinBounds(neighbor))
+                if (!snapshot.IsWithinBounds(neighbor))
                 {
                     continue;
                 }
 
-                var tile = state[neighbor];
+                var tile = snapshot[neighbor];
 
                 if (tile is TileType.Bedrock or TileType.Acid or TileType.Robot)
                 {
@@ -281,7 +324,7 @@ internal class Controller
 
         foreach (var (targetType, _) in MiningTargets)
         {
-            if (mapping.Contains(targetType))
+            if (mapping.ContainsKey(targetType))
             {
                 candidatesInView.Add((
                     targetType, 

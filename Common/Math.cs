@@ -2,7 +2,10 @@
 
 public enum Direction : byte
 {
-    U, D, L, R
+    U = 0,
+    D = 1,
+    L = 2,
+    R = 3
 }
 
 public readonly struct Vector2di : IComparable<Vector2di>

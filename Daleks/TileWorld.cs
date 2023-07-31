@@ -1,17 +1,21 @@
 ﻿using Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace Daleks;
 
 public sealed class TileWorld : IReadOnlyGrid<TileType>
 {
+
     private static readonly Vector2di[] NeighborOffsets = Enum.GetValues<Direction>().Select(x => x.Step()).ToArray();
    
     private readonly Grid<AStarCell> _pathfindingGrid;
+    private readonly Dictionary<TileType, float> _costMap;
 
-    public TileWorld(Vector2di size)
+    public TileWorld(Vector2di size, Dictionary<TileType, float> costMap)
     {
+        _costMap = costMap;
         Size = size;
         Tiles = new Grid<TileType>(size);
 
@@ -24,9 +28,9 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
 
         // Very slow but we're doing it once
 
-        for (var y = 0; y < size.Y; y++)
+        for (var y = 1; y < size.Y - 1; y++)
         {
-            for (var x = 0; x < size.X; x++)
+            for (var x = 1; x < size.X - 1; x++)
             {
                 _unexploredTree.Insert(new Vector2di(x, y));
             }
@@ -56,7 +60,7 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float NeighborCost(Vector2di current, Vector2di neighbor) => 1; // todo
+    private float NeighborCost(Vector2di neighbor) => _costMap.TryGetValue(Tiles[neighbor], out var c) ? c : 1f;
 
     private bool TryFindPathCore(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
     {
@@ -127,7 +131,7 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
                     continue;
                 }
 
-                var currentGCost = neighborCell.GCost + NeighborCost(currentPoint, neighborPos);
+                var currentGCost = neighborCell.GCost + NeighborCost(neighborPos);
 
                 if (!neighborCell.InQueue)
                 {
@@ -139,7 +143,6 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
                 }
 
                 neighborCell.Ancestor = currentPoint;
-
                 neighborCell.GCost = currentGCost;
                 neighborCell.FCost = currentGCost + Vector2di.DistanceSqr(neighborPos, goalPoint);
 
@@ -171,6 +174,8 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
 
     private IQuadTreeView? GetUnexploredRegionCore(BitQuadTree node, Vector2di position)
     {
+        var p2 = new Vector2(position.X, position.Y);
+
         while (true)
         {
             if (node.IsFilled || node.Size == 1)
@@ -182,7 +187,7 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
 
             if (bestChild == null)
             {
-                var bestCost = int.MaxValue;
+                var bestCost = float.MaxValue;
 
                 for (byte i = 0; i < 4; i++)
                 {
@@ -193,7 +198,11 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
                         continue;
                     }
 
-                    var actualCost = Vector2di.DistanceSqr(child.Position, position);
+                    var rect = child.NodeRectangle;
+
+                    var dx = Math.Max(rect.X - p2.X, Math.Max(0, p2.X - rect.Right));
+                    var dy = Math.Min(rect.Y - p2.Y, Math.Min(0, p2.Y - rect.Bottom));
+                    var actualCost = dx * dx + dy * dy;
 
                     if (actualCost < bestCost)
                     {
@@ -202,15 +211,16 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
                     }
                 }
 
-            }
-
-            if (bestChild == null)
-            {
-                return null;
+                if (bestChild == null)
+                {
+                    break;
+                }
             }
 
             node = bestChild;
         }
+
+        return null;
     }
 
     private struct AStarCell

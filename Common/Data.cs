@@ -6,6 +6,7 @@ namespace Common;
 
 public interface IReadOnlyGrid<out T>
 {
+    Vector2di Size { get; }
     T this[int x, int y] { get; }
     T this[Vector2di v] => this[v.X, v.Y];
     bool IsWithinBounds(int x, int y);
@@ -324,15 +325,26 @@ public sealed class BitQuadTree : IQuadTreeView
     }
 }
 
-public class HashMultiMap<TKey, TValue> where TKey : notnull
+public interface IReadOnlyHashMultiMap<in TKey, TValue>
+{
+    IReadOnlySet<TValue> this[TKey k] { get; }
+    bool ContainsKey(TKey k);
+}
+
+public class HashMultiMap<TKey, TValue> : IReadOnlyHashMultiMap<TKey, TValue> where TKey : notnull
 {
     public readonly Dictionary<TKey, HashSet<TValue>> Map = new();
 
-    public HashSet<TValue> this[TKey k] => Map.TryGetValue(k, out var e) ? e : new HashSet<TValue>().Also(s => Map.Add(k, s));
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private HashSet<TValue> Get(TKey k) => Map.TryGetValue(k, out var e) ? e : new HashSet<TValue>().Also(s => Map.Add(k, s));
+
+    public HashSet<TValue> this[TKey k] => Get(k);
+
+    IReadOnlySet<TValue> IReadOnlyHashMultiMap<TKey, TValue>.this[TKey k] => Get(k);
 
     public void Add(TKey k, TValue v) => this[k].Add(v);
 
-    public bool Contains(TKey k)
+    public bool ContainsKey(TKey k)
     {
         if (!Map.TryGetValue(k, out var set))
         {

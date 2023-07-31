@@ -15,7 +15,7 @@ while (true)
 {
     Console.WriteLine($"----- Round {manager.Round} -----");
 
-    var state = manager.Read();
+    var state = manager.Poll();
 
     if (controller == null)
     {
