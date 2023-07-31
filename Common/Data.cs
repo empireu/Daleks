@@ -358,3 +358,16 @@ public class HashMultiMap<TKey, TValue> : IReadOnlyHashMultiMap<TKey, TValue> wh
 
     public bool Remove(TKey k, TValue v) => Map.TryGetValue(k, out var set) && set.Remove(v);
 }
+
+public sealed class Histogram<TKey> where TKey : notnull
+{
+    public readonly Dictionary<TKey, int> Map = new();
+
+    public Dictionary<TKey, int>.KeyCollection Keys => Map.Keys;
+
+    public int this[TKey k]
+    {
+        get => Map.TryGetValue(k, out var v) ? v : 0;
+        set => Map[k] = value;
+    }
+}

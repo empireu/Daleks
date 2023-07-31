@@ -27,5 +27,10 @@ public static class Extensions
 
     public static bool IsObstacle(this TileType type) => type == TileType.Bedrock;
 
+    public static bool IsWalkable(this TileType type) => type is TileType.Dirt or TileType.Base or TileType.Acid;
+
     public static bool Contains(this Rectangle rect, Vector2di p) => rect.Contains(p.X, p.Y);
+
+    public static Vector2di CenterI(this Rectangle rect) =>
+        new Vector2di(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
 }

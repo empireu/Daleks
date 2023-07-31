@@ -7,9 +7,6 @@ namespace Daleks;
 
 public sealed class TileWorld : IReadOnlyGrid<TileType>
 {
-
-    private static readonly Vector2di[] NeighborOffsets = Enum.GetValues<Direction>().Select(x => x.Step()).ToArray();
-   
     private readonly Grid<AStarCell> _pathfindingGrid;
     private readonly Dictionary<TileType, float> _costMap;
 
@@ -28,13 +25,13 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
 
         // Very slow but we're doing it once
 
-        for (var y = 1; y < size.Y - 1; y++)
-        {
-            for (var x = 1; x < size.X - 1; x++)
-            {
-                _unexploredTree.Insert(new Vector2di(x, y));
-            }
-        }
+        //for (var y = 1; y < size.Y - 1; y++)
+        //{
+        //    for (var x = 1; x < size.X - 1; x++)
+        //    {
+        //        _unexploredTree.Insert(new Vector2di(x, y));
+        //    }
+        //}
     }
     
     public Vector2di Size { get; private set; }
@@ -51,12 +48,66 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
         Array.Fill(_pathfindingGrid.Storage, new AStarCell());
     }
 
+    private CachedPath? _cachedPath;
+
     public bool TryFindPath(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
     {
-        var result = TryFindPathCore(startPoint, goalPoint, out path);
+        void EvictCache()
+        {
+            _cachedPath = null;
+        }
+
+        if (_cachedPath != null && _cachedPath.GoalPos == goalPoint)
+        {
+            var queue = new Queue<Vector2di>(_cachedPath.Path);
+            var cache = _cachedPath.Path;
+
+            // ReSharper disable once ForCanBeConvertedToForeach
+            for (var i = 0; i < cache.Count; i++)
+            {
+                if (Tiles[cache[i]].IsObstacle())
+                {
+                    goto pass;
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                var currentPoint = queue.Dequeue();
+
+                if (currentPoint == startPoint)
+                {
+                    path = new List<Vector2di>(queue.Count + 1) { startPoint };
+
+                    path.AddRange(queue);
+
+                    if (path.Count == 1)
+                    {
+                        path.Add(goalPoint);
+                    }
+
+                    return true;
+                }
+            }
+
+            pass:
+
+            EvictCache();
+        }
+
+        var successful = TryFindPathCore(startPoint, goalPoint, out path);
+        
         ClearPathfindingData();
 
-        return result;
+        if (successful)
+        {
+            _cachedPath = new CachedPath(goalPoint, path!)
+            {
+                VehiclePos = startPoint
+            };
+        }
+
+        return successful;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -112,12 +163,9 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
             cell.Closed = true;
             cell.InQueue = false;
 
-            // ReSharper disable once ForCanBeConvertedToForeach
-            for (var i = 0; i < NeighborOffsets.Length; i++)
+            for (byte i = 0; i < 4; i++)
             {
-                var offset = NeighborOffsets[i];
-
-                var neighborPos = new Vector2di(currentPoint.X + offset.X, currentPoint.Y + offset.Y);
+                var neighborPos = currentPoint + (Direction)i;
 
                 if (!Tiles.IsWithinBounds(neighborPos))
                 {
@@ -237,5 +285,19 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
             GCost = gCost;
             FCost = fCost;
         }
+    }
+
+    private sealed class CachedPath
+    {
+        public Vector2di GoalPos { get; }
+        public List<Vector2di> Path { get; }
+
+        public CachedPath(Vector2di goalPos, List<Vector2di> path)
+        {
+            GoalPos = goalPos;
+            Path = path;
+        }
+
+        public Vector2di VehiclePos { get; set; }
     }
 }

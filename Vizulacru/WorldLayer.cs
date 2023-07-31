@@ -218,7 +218,7 @@ internal sealed class WorldLayer : Layer, IDisposable
     private bool _dragCamera;
 
     private readonly RemoteGame _game;
-    private Controller2? _controller;
+    private Bot? _controller;
     private GameSnapshot? _lastGameState;
 
     private Vector2di MouseGrid
@@ -326,6 +326,32 @@ internal sealed class WorldLayer : Layer, IDisposable
 
                 ImGui.Text($"Grid size: {world.Size}");
                 ImGui.Text($"Selected: {world[mouse.X, mouse.Y]}");
+
+                ImGui.Text($"Max overvisits: {_maxOverVisits}");
+                ImGui.Text($"Average overvisits: {_averageOverVisits:F4}");
+
+                var ores = new Histogram<TileType>();
+
+                foreach (var position in _controller.PendingOres.Keys)
+                {
+                    ores[_controller.TileWorld.Tiles[position]]++;
+                }
+
+                foreach (var type in ores.Keys)
+                {
+                    ImGui.Text($"{type}: {ores[type]}");
+                }
+
+                if (_controller.UpgradeQueue.Count > 0)
+                {
+                    ImGui.Text("Upgrade queue:");
+                    ImGui.Indent();
+                    foreach (var abilityType in _controller.UpgradeQueue)
+                    {
+                        ImGui.Text(abilityType.ToString());
+                    }
+                    ImGui.Unindent();
+                }
             }
         }
 
@@ -396,6 +422,11 @@ internal sealed class WorldLayer : Layer, IDisposable
         _cameraController.Update(frameInfo.DeltaTime);
     }
 
+    private readonly Histogram<Vector2di> _overviewHistogram = new();
+
+    private int _maxOverVisits;
+    private double _averageOverVisits;
+
     private void UpdateGame()
     {
         if (!_game.TryRead(out var state))
@@ -403,7 +434,27 @@ internal sealed class WorldLayer : Layer, IDisposable
             return;
         }
 
-        _controller ??= new Controller2(_game.Match, _game.AcidRounds, new BotConfig());
+        foreach (var tile in state.DiscoveredTiles)
+        {
+            _overviewHistogram[tile]++;
+        }
+
+        _maxOverVisits = 0;
+        _averageOverVisits = 0;
+
+        foreach (var tile in _overviewHistogram.Keys)
+        {
+            var visits = _overviewHistogram[tile];
+            _maxOverVisits = Math.Max(_maxOverVisits, visits);
+            _averageOverVisits += visits;
+        }
+
+        if (_overviewHistogram.Keys.Count > 0)
+        {
+            _averageOverVisits /= _overviewHistogram.Keys.Count;
+        }
+
+        _controller ??= new Bot(_game.Match, _game.AcidRounds, new BotConfig());
 
         var cl = new CommandState(state, _game.Match.BasePosition);
 
@@ -423,7 +474,9 @@ internal sealed class WorldLayer : Layer, IDisposable
     }
 
     private static Vector2 GridPos(Vector2di pos) => new(pos.X, -pos.Y);
+    private static Vector2 GridPos(Vector2 pos) => new(pos.X, -pos.Y);
     private static Vector2 GridPos(int x, int y) => new(x, -y);
+    private static Vector2 GridPos(float x, float y) => new(x, -y);
 
     private void RenderHighlight()
     {
@@ -473,6 +526,21 @@ internal sealed class WorldLayer : Layer, IDisposable
                 }
             }
         }
+
+        /*for (var index = 1; index < _controller.SearchGrid.C.Count; index++)
+        {
+            var g = _controller.SearchGrid.C[index];
+            var rnd = new Random(g.GetHashCode());
+            var colo = rnd.NextVector4(min: 0f) with { W = 0.3f };
+
+            var a = _controller.SearchGrid.C[index - 1];
+            var b = _controller.SearchGrid.C[index ];
+
+            Vector2 p(SearchGrid.Node n) => GridPos(n.Rect.X + n.Rect.Width / 2f, n.Rect.Y + n.Rect.Height / 2f);
+
+            _dynamicBatch.Line(p(a), p(b), colo, 0.1f);
+
+        }*/
     }
 
     private void RenderView()
@@ -488,11 +556,27 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
+    private void RenderPath()
+    {
+        if (_controller?.Path == null)
+        {
+            return;
+        }
+
+        for (var i = 1; i < _controller.Path.Count; i++)
+        {
+            var a = _controller.Path[i - 1];
+            var b = _controller.Path[i];
+            var color = new Random(HashCode.Combine(a, b)).NextVector4(min: 0.2f) with { W = 0.8f };
+            _dynamicBatch.Line(GridPos(a), GridPos(b), color, 0.2f);
+        }
+    }
+
     private void RenderUnexploredTarget()
     {
-        if (_controller is { UnexploredRegion: not null })
+        if (_controller is { NextMiningTile: not null })
         {
-            _dynamicBatch.Quad(GridPos(_controller.UnexploredRegion.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.3f));
+            _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.3f));
         }
     }
 
@@ -521,6 +605,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
 
         RenderPass(RenderUnexploredTarget);
+        RenderPass(RenderPath);
 
         RenderPass(RenderHighlight);
 
