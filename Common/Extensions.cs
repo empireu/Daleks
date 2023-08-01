@@ -26,8 +26,8 @@ public static class Extensions
         _ => throw new ArgumentOutOfRangeException(nameof(dir), dir, $"Unexpected direction {dir}")
     };
 
-    public static bool IsUnbreakable(this TileType type) => type is TileType.Bedrock or TileType.Robot;
-    public static bool IsWalkable(this TileType type) => type is TileType.Dirt or TileType.Base or TileType.Acid;
+    public static bool IsUnbreakable(this TileType type) => type is TileType.Bedrock;
+    public static bool IsWalkable(this TileType type) => type is TileType.Dirt or TileType.Base or TileType.Acid or TileType.Unknown;
 
     public static bool Contains(this Rectangle rect, Vector2di p) => rect.Contains(p.X, p.Y);
 

@@ -193,18 +193,26 @@ internal sealed class RemoteGame : IDisposable
     }
 }
 
+internal sealed class GameOptions
+{
+    public int Rounds { get; init; }
+}
+
 internal sealed class WorldLayer : Layer, IDisposable
 {
     private const float MinZoom = 1.0f;
     private const float MaxZoom = 150f;
     private const float CamDragSpeed = 2.5f;
     private const float CamZoomSpeed = 15f;
+
     private static readonly Vector2 TileScale = Vector2.One;
     private static readonly RgbaFloat4 HighlightColor = new(0.1f, 0.8f, 0.05f, 0.5f);
 
     private readonly App _app;
     private readonly ImGuiLayer _imGui;
     private readonly Textures _textures;
+    private readonly IBotConfig _config;
+    private readonly GameOptions _gameOptions;
     private readonly OrthographicCameraController2D _cameraController;
 
     private readonly QuadBatch _dynamicBatch;
@@ -252,11 +260,13 @@ internal sealed class WorldLayer : Layer, IDisposable
         _cameraController.FuturePosition2 = GridPos(_lastGameState.Player.Position);
     }
 
-    public WorldLayer(App app, ImGuiLayer imGui, Textures textures, ILogger<RemoteGame> remoteGameLogger)
+    public WorldLayer(App app, ImGuiLayer imGui, Textures textures, ILogger<RemoteGame> remoteGameLogger, IBotConfig config, GameOptions gameOptions)
     {
         _app = app;
         _imGui = imGui;
         _textures = textures;
+        _config = config;
+        _gameOptions = gameOptions;
 
         _cameraController = new OrthographicCameraController2D(
             new OrthographicCamera(0, -1, 1),
@@ -317,10 +327,9 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         var mouse = MouseGrid;
 
-        if (Begin("Game"))
+        if (_controller != null && _lastGameState != null)
         {
-
-            if (_controller != null && _lastGameState != null)
+            if (Begin("Game"))
             {
                 var world = _controller.TileMap;
 
@@ -341,9 +350,9 @@ internal sealed class WorldLayer : Layer, IDisposable
                 {
                     ores[_controller.TileMap.Tiles[position]]++;
                 }
-                
+
                 ImGui.Indent();
-                
+
                 foreach (var type in ores.Keys)
                 {
                     ImGui.Text($"{type}: {ores[type]}");
@@ -356,20 +365,91 @@ internal sealed class WorldLayer : Layer, IDisposable
                 if (_controller.UpgradeQueue.Count > 0)
                 {
                     ImGui.Text("Upgrade queue:");
-                    
+
                     ImGui.Indent();
-                    
+
                     foreach (var abilityType in _controller.UpgradeQueue)
                     {
                         ImGui.Text(abilityType.ToString());
                     }
-                    
+
+                    ImGui.Unindent();
+                }
+
+                var player = _lastGameState.Player;
+
+                ImGui.Text("Inventory:");
+                {
+                    ImGui.Indent();
+                    ImGui.Text($"Osmium x {player.OsmiumCount}");
+                    ImGui.Text($"Iron   x {player.IronCount}");
+                    ImGui.Text($"Cobble x {player.CobbleCount}");
+                    ImGui.Unindent();
+                }
+
+                ImGui.TextColored(player.Hp < 10 ? new Vector4(1, 0, 0, 1) : new Vector4(0, 1, 0, 1), $"HP: {player.Hp}");
+
+                ImGui.Text("Abilities:");
+                {
+                    ImGui.Indent();
+
+                    ImGui.Text($"Battery: {(player.HasBattery ? "yes" : "no")}");
+                    ImGui.Text($"Antenna: {(player.HasAntenna ? "yes" : "no")}");
+                    ImGui.Separator();
+
+                    ImGui.Text($"Attack: {player.Attack}");
+                    ImGui.Text($"Sight : {player.Sight}");
+                    ImGui.Text($"Wheel : {player.Movement}");
+                    ImGui.Text($"Dig   : {player.Dig}");
+
                     ImGui.Unindent();
                 }
             }
-        }
 
-        ImGui.End();
+            ImGui.End();
+
+            if (Begin("Attack Log"))
+            {
+                if (_controller.Attacks.Count > 0)
+                {
+                    foreach (var attack in _controller.Attacks)
+                    {
+                        ImGui.Text($"R: {attack.Round}, T: {attack.TargetPos}");
+                        ImGui.Separator();
+                    }
+                }
+                else
+                {
+                    ImGui.Text("N/A");
+                }
+            }
+
+            ImGui.End();
+
+            if (Begin("Logs"))
+            {
+                var prevDepth = 0;
+
+                foreach (var log in _controller.Logs)
+                {
+                    while (log.Depth > prevDepth)
+                    {
+                        ImGui.Indent();
+                        prevDepth++;
+                    }
+
+                    while (log.Depth < prevDepth)
+                    {
+                        ImGui.Unindent();
+                        prevDepth--;
+                    }
+
+                    ImGui.Text(log.Text);
+                }
+            }
+
+            ImGui.End();
+        }
     }
 
     protected override void OnAdded()
@@ -443,7 +523,7 @@ internal sealed class WorldLayer : Layer, IDisposable
             return;
         }
 
-        _controller ??= new Bot(_game.Match, _game.AcidRounds, new BotConfig());
+        _controller ??= new Bot(_game.Match, _config, _gameOptions.Rounds);
 
         var cl = new CommandState(state, _game.Match.BasePosition);
 
@@ -531,6 +611,40 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
+    private void RenderAttackHistory()
+    {
+        if (_controller == null)
+        {
+            return;
+        }
+
+        var attackIntensities = new Histogram<Vector2di>();
+
+        foreach (var attack in _controller.Attacks)
+        {
+            attackIntensities[attack.TargetPos]++;
+        }
+
+        var maxCount = 0;
+
+        foreach (var position in attackIntensities.Keys)
+        {
+            var count = attackIntensities[position];
+            maxCount = Math.Max(maxCount, count);
+        }
+
+        if (maxCount > 0)
+        {
+            foreach (var position in attackIntensities.Keys)
+            {
+                _dynamicBatch.Quad(
+                    GridPos(position), 
+                    new RgbaFloat4(1, 0, 0, attackIntensities[position] / (float)maxCount * 0.8f)
+                );
+            }
+        }
+    }
+
     private void RenderView()
     {
         if (_lastGameState == null)
@@ -582,6 +696,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
 
         RenderPass(RenderTerrain);
+        RenderPass(RenderAttackHistory);
         RenderPass(RenderView);
 
         if (_renderUnexploredTree && _controller != null)

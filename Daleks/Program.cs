@@ -8,8 +8,7 @@ const int rounds = 150;
 
 var manager = new GameManager(id, rounds);
 
-Controller? controller = null;
-Vector2di? basePos = null;
+Bot? controller = null;
 
 while (true)
 {
@@ -21,7 +20,7 @@ while (true)
     {
         var match = manager.MatchInfo;
         Console.WriteLine($"Initializing game with grid of {match.GridSize}");
-        controller = new Controller(match.GridSize, match.BasePosition, rounds);
+        controller = new Bot(match, new BotConfig(), rounds);
     }
 
     var player = state.Player;

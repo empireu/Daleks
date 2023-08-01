@@ -49,7 +49,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
     {
         Array.Fill(_pathfindingGrid.Storage, new AStarCell
         {
-            GCost = float.MaxValue
+            GScore = float.MaxValue
         });
     }
 
@@ -114,10 +114,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
         return successful;
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float EdgeCost(Vector2di neighbor) => _costMap.TryGetValue(Tiles[neighbor], out var c) ? c : 1f;
-
+    
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float DiagonalCost(Vector2di cPos)
     {
@@ -155,16 +152,6 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             : FCost.CompareTo(other.FCost);
     }
 
-    /*private sealed class PriorityComparer : IComparer<Priority>
-    {
-        public int Compare(Priority x, Priority y)
-        {
-            return x.FCost.Equals(y.FCost) 
-                ? x.HCost.CompareTo(y.HCost) 
-                : x.FCost.CompareTo(y.FCost);
-        }
-    }*/
-
     private bool TryFindPathCore(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
     {
         if (!Tiles.IsWithinBounds(startPoint) || !Tiles.IsWithinBounds(goalPoint))
@@ -179,7 +166,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             return true;
         }
 
-        _pathfindingGrid[startPoint].GCost = 0;
+        _pathfindingGrid[startPoint].GScore = 0;
 
         var queue = new PrioritySet<Vector2di, Priority>();
 
@@ -226,15 +213,15 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
                 ref var neighbor = ref _pathfindingGrid[neighborPoint];
 
-                var tentativeGScore = current.GCost + 1;
+                var tentativeGScore = current.GScore + 1;
 
-                if (!(tentativeGScore < neighbor.GCost))
+                if (tentativeGScore > neighbor.GScore)
                 {
                     continue;
                 }
 
                 neighbor.Ancestor = currentPoint;
-                neighbor.GCost = tentativeGScore;
+                neighbor.GScore = tentativeGScore;
                     
                 var hCost = Heuristic(neighborPoint, goalPoint);
                 
@@ -253,7 +240,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             }
         }
         path = null;
-
+        Console.WriteLine("Exhausted queue");
         return false;
     }
 
@@ -327,7 +314,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
     private struct AStarCell
     {
-        public float GCost;
+        public float GScore;
 
         public Vector2di? Ancestor;
     }
