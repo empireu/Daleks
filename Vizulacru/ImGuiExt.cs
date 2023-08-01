@@ -1,5 +1,4 @@
 ﻿using ImGuiNET;
-using System.Numerics;
 
 namespace Vizulacru;
 

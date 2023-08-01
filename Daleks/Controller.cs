@@ -1,108 +1,45 @@
 ﻿using System.Diagnostics;
-using System.Drawing;
-using System.Numerics;
-using System.Text.RegularExpressions;
+using System.Runtime.CompilerServices;
 using Common;
 
 namespace Daleks;
 
 public sealed class BotConfig
 {
-    public readonly Dictionary<TileType, float> CostMap = new()
+    public Dictionary<Bot.ExploreMode, (float Player, float Base)> ExploreCostMultipliers { get; set; } = new()
     {
-        { TileType.Unknown, -10f },
-        { TileType.Acid, 10000 },
-        { TileType.Stone, 5 },
-        { TileType.Cobblestone, 5 }
+        { Bot.ExploreMode.Closest, (1.0f, 0.0f) },
+        { Bot.ExploreMode.ClosestBase, (1.0f, 2.5f) }
     };
 
-    public readonly AbilityType[] UpgradeList = new[]
+    public Dictionary<TileType, float> CostMap { get; set; } = new()
     {
-        AbilityType.Sight,
-        AbilityType.Movement,
-        AbilityType.Sight,
-        AbilityType.Movement,
-        AbilityType.Attack,
-        AbilityType.Attack
+        { TileType.Acid, 10_000 },
+        { TileType.Stone, 2.5f },
+        { TileType.Cobblestone, 2.5f },
     };
 
-    public int ReserveOsmium = 2;
-}
-
-public sealed class SearchGrid
-{
-    public readonly List<Rectangle> Nodes = new();
-
-    public SearchGrid(Vector2di searchSize, int diameter)
+    public UpgradeType[] UpgradeList { get; set; } = new[]
     {
-        var radius = diameter / 2;
+        UpgradeType.Sight,
+        UpgradeType.Movement,
+        UpgradeType.Sight,
+        UpgradeType.Movement,
+        UpgradeType.Attack,
+        UpgradeType.Attack
+    };
 
-        for (var y = radius; y < searchSize.Y - radius; y += diameter)
-        {
-            for (var x = radius; x < searchSize.X - radius; x += diameter)
-            {
-                Nodes.Add(new Rectangle(x, y, diameter, diameter));
-            }
-        }
-    }
+    public int ReserveOsmium { get; set; } = 1;
 
-    public void RemoveNode(Rectangle node)
-    {
-        if (!Nodes.Remove(node))
-        {
-            throw new Exception($"Node {node} does not exist in graph");
-        }
-    }
-
-    public Rectangle? FindNode(Vector2di target)
-    {
-        if (Nodes.Count == 0)
-        {
-            return null;
-        }
-
-        Rectangle? bestNode = null;
-        var bestCost = double.MaxValue;
-        var target2 = new Vector2(target.X, target.Y);
-
-        // ReSharper disable once ForCanBeConvertedToForeach
-        for (var i = 0; i < Nodes.Count; i++)
-        {
-            var node = Nodes[i];
-
-            if (node.Contains(target))
-            {
-                return node;
-            }
-
-            var center = new Vector2(node.X + node.Width / 2f, node.Y + node.Height / 2f);
-            var cost = Vector2.DistanceSquared(center, target2);
-
-            if (cost < bestCost)
-            {
-                bestCost = cost;
-                bestNode = node;
-            }
-        }
-
-        return bestNode;
-    }
+    public int RoundsMargin { get; set; } = 15;
 }
 
 public sealed class Bot
 {
-    private static readonly Dictionary<int, int> SightDiameters = new Dictionary<int, int>()
-    {
-        { 1, 5 },
-        { 2, 7 },
-        { 3, 9 }
-    };
-
     public BotConfig Config { get; }
     public MatchInfo Match { get; }
     public int AcidRounds { get; }
-    
-    public TileWorld TileWorld { get; }
+    public TileMap TileMap { get; }
 
     // Tiles that were discovered at some point
     private readonly HashSet<Vector2di> _discoveredTiles = new();
@@ -115,29 +52,37 @@ public sealed class Bot
     // Last used path (for display)
     private List<Vector2di>? _path;
 
-    private readonly Queue<AbilityType> _upgradeQueue = new();
+    private readonly Queue<UpgradeType> _upgradeQueue = new();
 
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
     public IReadOnlySet<Vector2di> UndiscoveredMiningCandidates => _undiscoveredMiningCandidates;
     public IReadOnlyDictionary<Vector2di, TileType> PendingOres => _pendingOres;
     public IReadOnlyList<Vector2di>? Path => _path;
-    public IReadOnlyCollection<AbilityType> UpgradeQueue => _upgradeQueue;
+    public IReadOnlyCollection<UpgradeType> UpgradeQueue => _upgradeQueue;
 
     public Vector2di? NextMiningTile { get; private set; }
 
-    public SearchGrid SearchGrid { get; private set; }
-
-    private int _searchGridLevel = SightDiameters[1];
-
+    public ExploreMode ExplorationMode { get; private set; } = ExploreMode.ClosestBase;
+    
     public Bot(MatchInfo match, int acidRounds, BotConfig config)
     {
+        if (config.UpgradeList.Count(x => x == UpgradeType.Antenna) > 1)
+        {
+            throw new Exception("Cannot use multiple antenna upgrades");
+        }
+
+        if (config.UpgradeList.Contains(UpgradeType.Battery))
+        {
+            throw new Exception("Bot prohibits explicit battery upgrade");
+        }
+
+        acidRounds = 500;
         Config = config;
         Match = match;
         AcidRounds = acidRounds;
-        TileWorld = new TileWorld(match.GridSize, config.CostMap);
+        TileMap = new TileMap(match.GridSize, config.CostMap);
 
-        SearchGrid = new SearchGrid(Match.GridSize, _searchGridLevel);
-
+        // Ignore bedrock edges
         for (var i = 1; i < match.GridSize.X - 1; i++)
         {
             for (var j = 1; j < match.GridSize.Y - 1; j++)
@@ -157,32 +102,6 @@ public sealed class Bot
         _previousExploreTarget = null;
     }
 
-    private void UpdateSearchGrid(CommandState cl)
-    {
-        var sight = cl.Head.Player.Sight;
-
-        if (sight == _searchGridLevel)
-        {
-            return;
-        }
-
-        _searchGridLevel = sight;
-
-        SearchGrid = new SearchGrid(Match.GridSize, SightDiameters[sight]);
-
-        var nodes = SearchGrid.Nodes.ToArray();
-
-        foreach (var node in nodes)
-        {
-            if (_discoveredTiles.Contains(node.CenterI()))
-            {
-                SearchGrid.RemoveNode(node);
-            }
-        }
-
-        ResetExploreTarget();
-    }
-
     private void UpdateTiles(CommandState cl)
     {
         var playerPos = cl.Head.Player.Position;
@@ -199,8 +118,8 @@ public sealed class Bot
             _discoveredTiles.Add(tilePos);
             _undiscoveredMiningCandidates.Remove(tilePos);
 
-            TileWorld.Tiles[tilePos] = type;
-            TileWorld.SetExplored(tilePos);
+            TileMap.Tiles[tilePos] = type;
+            TileMap.SetExplored(tilePos);
 
             if (type is TileType.Iron or TileType.Osmium)
             {
@@ -215,20 +134,36 @@ public sealed class Bot
         _pendingOres.Remove(playerPos);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float DistanceHeuristic(Vector2di player, Vector2di target)
+    {
+        var (kp, kb) = Config.ExploreCostMultipliers[ExplorationMode];
+     
+        return kp * Vector2di.Manhattan(player, target) + kb * Vector2di.Manhattan(Match.BasePosition, target);
+    }
+
+    // used in GetNextUnexploredTile
+    private readonly PriorityQueue<Vector2di, float> _discoveryQueueCache = new();
+
     private Vector2di? GetNextUnexploredTile(Vector2di playerPos)
     {
-        var discoveryQueue = new PriorityQueue<Vector2di, double>();
+        _discoveryQueueCache.Clear();
 
-        foreach (var undiscoveredTile in _undiscoveredMiningCandidates)
+        foreach (var tile in _undiscoveredMiningCandidates)
         {
-            discoveryQueue.Enqueue(undiscoveredTile, Vector2di.DistanceSqr(undiscoveredTile, playerPos));
+            if (tile == Match.BasePosition || tile == playerPos)
+            {
+                continue;
+            }
+
+            _discoveryQueueCache.Enqueue(tile, DistanceHeuristic(playerPos, tile));
         }
 
-        while (discoveryQueue.Count > 0)
+        while (_discoveryQueueCache.Count > 0)
         {
-            var candidate = discoveryQueue.Dequeue();
+            var candidate = _discoveryQueueCache.Dequeue();
 
-            if (TileWorld.TryFindPath(playerPos, candidate, out _))
+            if (TileMap.TryFindPath(playerPos, candidate, out _))
             {
                 return candidate;
             }
@@ -239,63 +174,26 @@ public sealed class Bot
         return null;
     }
 
-    private Vector2di? GetNextUnexploredRegion(Vector2di playerPos)
-    {
-        while (true)
-        {
-            var currentNode = SearchGrid.FindNode(playerPos);
-
-            if (!currentNode.HasValue)
-            {
-                // Search grid done
-                return null;
-            }
-
-            var rect = currentNode.Value;
-
-            var target = rect.CenterI();
-
-            if (TileWorld.Tiles[target] == TileType.Bedrock)
-            {
-                SearchGrid.RemoveNode(rect);
-                continue;
-            }
-
-            if (target == playerPos)
-            {
-                SearchGrid.RemoveNode(rect);
-                continue;
-            }
-
-            if (!TileWorld.TryFindPath(playerPos, target, out _))
-            {
-                SearchGrid.RemoveNode(rect);
-                continue;
-            }
-
-            return target;
-        }
-    }
-
     private Vector2di? _previousExploreTarget;
 
     private Vector2di? GetNextExploreTarget(Vector2di playerPos)
     {
         if (_previousExploreTarget.HasValue)
         {
-            if (!TileWorld.Tiles[_previousExploreTarget.Value].IsObstacle() &&
-                _undiscoveredMiningCandidates.Contains(_previousExploreTarget.Value))
+            var t = _previousExploreTarget.Value;
+
+            if (!TileMap.Tiles[t].IsUnbreakable() && _undiscoveredMiningCandidates.Contains(t))
             {
                 return _previousExploreTarget;
             }
         }
 
-        _previousExploreTarget = GetNextUnexploredRegion(playerPos) ?? GetNextUnexploredTile(playerPos);
+        _previousExploreTarget = GetNextUnexploredTile(playerPos);
         
         return _previousExploreTarget;
     }
 
-    private bool TryStepTowards(Vector2di target, CommandState cl, out bool reached)
+    private bool TryStepTowards(Vector2di target, CommandState cl, out bool reached, bool useObstacleMining = true, bool useMiningFast = true)
     {
         if (cl.Head.Player.Position != cl.Tail.Player.Position)
         {
@@ -310,7 +208,7 @@ public sealed class Bot
         
         reached = false;
 
-        if (!TileWorld.TryFindPath(cl.Head.Player.Position, target, out var path))
+        if (!TileMap.TryFindPath(cl.Head.Player.Position, target, out var path))
         {
             Console.WriteLine("No path");
             return false;
@@ -328,12 +226,15 @@ public sealed class Bot
             var actualPosition = cl.Tail.Player.Position;
             var move = actualPosition.DirectionTo(nextPosition);
 
-            if (!TileWorld.Tiles[nextPosition].IsWalkable())
+            if (!TileMap.Tiles[nextPosition].IsWalkable())
             {
                 if (cl.Head.Player.Position == actualPosition)
                 {
                     // First move
-                    cl.Mine(move);
+                    if (useObstacleMining)
+                    {
+                        cl.Mine(move);
+                    }
                     return true;
                 }
 
@@ -342,13 +243,54 @@ public sealed class Bot
             }
 
             cl.Move(move);
-            cl.Mine(move);
+
+            if (!cl.Tail[cl.Tail.Player.Position + move].IsWalkable())
+            {
+                if (useMiningFast)
+                {
+                    cl.Mine(move);
+                }
+            }
         }
 
         return true;
     }
 
-    private void DoMining(CommandState cl)
+    private static bool Attack(CommandState cl, bool simulate = false)
+    {
+        var state = cl.Tail;
+
+        foreach (var direction in Enum.GetValues<Direction>())
+        {
+            for (var dist = 1; dist <= state.Player.Attack; dist++)
+            {
+                var p = state.Player.Position + direction.Step() * dist;
+
+                if (!state.IsWithinBounds(p))
+                {
+                    continue;
+                }
+
+                var tile = state[p];
+
+                if (tile == TileType.Robot)
+                {
+                    if (!simulate)
+                    {
+                        cl.Attack(direction);
+                    }
+                  
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool a;
+
+    private void UpdateMining(CommandState cl)
     {
         var playerPos = cl.Head.Player.Position;
 
@@ -358,13 +300,45 @@ public sealed class Bot
 
         if (!NextMiningTile.HasValue)
         {
+            if (!a)
+            {
+                a = true;
+                Console.WriteLine($"{cl.Head.Round} rnds");
+            }
             return;
         }
 
         TryStepTowards(NextMiningTile.Value, cl, out var reached);
+
+        if (cl is { HasAction: false, Head.Player.HasAntenna: true } && NextMiningTile.Value != playerPos)
+        {
+            cl.Scan(playerPos.DirectionTo(NextMiningTile.Value));
+        }
+        else
+        {
+            foreach (var direction in Enum.GetValues<Direction>())
+            {
+                if (cl.IsMined(direction))
+                {
+                    continue;
+                }
+
+                if (cl.RemainingMines <= 0)
+                {
+                    break;
+                }
+
+                var type = cl.Tail[cl.Tail.Player.Position + direction];
+
+                if (!type.IsWalkable() && !type.IsUnbreakable())
+                {
+                    cl.Mine(direction);
+                }
+            }
+        }
     }
 
-    private bool DoBuyBattery(CommandState cl)
+    private bool UpdateBuyBattery(CommandState cl)
     {
         if (!TryStepTowards(Match.BasePosition, cl, out var reached))
         {
@@ -380,17 +354,61 @@ public sealed class Bot
         return true;
     }
 
+    public void UpdateRetreat(CommandState cl)
+    {
+        var center = Match.GridSize / 2;
+
+        if(!TryStepTowards(center, cl, out var reached))
+        {
+            Console.WriteLine($"Failed to step to center!: {Attack(cl)}");
+        }
+
+        if (!reached)
+        {
+            Console.WriteLine("Not reached");
+            return;
+        }
+
+        Console.WriteLine("Reached");
+
+        if (Attack(cl))
+        {
+            Console.WriteLine("Attack");
+            return;
+        }
+
+        // build box
+
+        var playerPos = cl.Head.Player.Position;
+
+        foreach (var direction in Enum.GetValues<Direction>())
+        {
+            if ((TileMap.Tiles[playerPos + direction]).IsWalkable())
+            {
+                cl.Place(direction);
+
+                return;
+            }
+        }
+    }
+
     public void Update(CommandState cl)
     {
+        _path = null;
+
         UpdateTiles(cl);
-        UpdateSearchGrid(cl);
 
         var player = cl.Head.Player;
 
         if (!player.HasBattery && cl.CouldBuyBattery)
         {
-            if (DoBuyBattery(cl))
+            if (UpdateBuyBattery(cl))
             {
+                if (cl.Tail.Player.HasBattery)
+                {
+                    ExplorationMode = ExploreMode.Closest;
+                }
+
                 return;
             }
         }
@@ -402,13 +420,62 @@ public sealed class Bot
                 Debug.Assert(cl.Heal());
             }
 
-            while (player.OsmiumCount > Config.ReserveOsmium && _upgradeQueue.Count > 0)
+            while (_upgradeQueue.Count > 0)
             {
-                var ability = _upgradeQueue.Peek();
+                var upgrade = _upgradeQueue.Peek();
 
-                if (cl.UpgradeAbility(ability))
+                bool CanSpendOsmium() => cl.Tail.Player.OsmiumCount > Config.ReserveOsmium;
+
+                if (upgrade is UpgradeType.Antenna)
                 {
-                    _upgradeQueue.Dequeue();
+                    if (cl.Tail.Player.HasAntenna)
+                    {
+                        Debug.Assert(_upgradeQueue.Dequeue() == UpgradeType.Antenna);
+                        continue;
+                    }
+
+                    if (cl.CouldBuyAntenna && CanSpendOsmium())
+                    {
+                        Debug.Assert(cl.BuyAntenna());
+                        Debug.Assert(_upgradeQueue.Dequeue() == UpgradeType.Antenna);
+                        continue;
+                    }
+
+                    break;
+                }
+
+                Debug.Assert(upgrade != UpgradeType.Battery);
+
+                var actualLevel = cl.Tail.Player.GetUpgradeLevel(upgrade);
+
+                Debug.Assert(actualLevel is >= 1 and <= 3);
+
+                if (actualLevel == 3)
+                {
+                    Debug.Assert(_upgradeQueue.Dequeue() == upgrade);
+                    continue;
+                }
+
+                var ability = upgrade switch
+                {
+                    UpgradeType.Sight => AbilityType.Sight,
+                    UpgradeType.Attack => AbilityType.Attack,
+                    UpgradeType.Drill => AbilityType.Drill,
+                    UpgradeType.Movement => AbilityType.Movement,
+                    _ => throw new ArgumentOutOfRangeException(null, $"Unexpected upgrade {upgrade}")
+                };
+
+                // Upgrade if osmium is not required or threshold is satisfied
+                if (actualLevel == 1 || CanSpendOsmium()) 
+                {
+                    if (cl.UpgradeAbility(ability))
+                    {
+                        Debug.Assert(_upgradeQueue.Dequeue() == upgrade);
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -416,8 +483,21 @@ public sealed class Bot
                 }
             }
         }
-        
-        DoMining(cl);
+
+        if (AcidRounds - cl.Head.Round <= Config.RoundsMargin)
+        {
+            UpdateRetreat(cl);
+        }
+        else
+        {
+            UpdateMining(cl);
+        }
+    }
+
+    public enum ExploreMode
+    {
+        Closest,
+        ClosestBase
     }
 }
 

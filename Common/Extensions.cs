@@ -1,5 +1,6 @@
 ﻿using System.Drawing;
 using System.Numerics;
+using System.Xml.Linq;
 
 namespace Common;
 
@@ -25,12 +26,11 @@ public static class Extensions
         _ => throw new ArgumentOutOfRangeException(nameof(dir), dir, $"Unexpected direction {dir}")
     };
 
-    public static bool IsObstacle(this TileType type) => type == TileType.Bedrock;
-
+    public static bool IsUnbreakable(this TileType type) => type is TileType.Bedrock or TileType.Robot;
     public static bool IsWalkable(this TileType type) => type is TileType.Dirt or TileType.Base or TileType.Acid;
 
     public static bool Contains(this Rectangle rect, Vector2di p) => rect.Contains(p.X, p.Y);
 
-    public static Vector2di CenterI(this Rectangle rect) =>
-        new Vector2di(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+    public static Vector2di CenterI(this Rectangle rect) => new(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+    public static Vector2 Center(this Rectangle rect) => new(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
 }

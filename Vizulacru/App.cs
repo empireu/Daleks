@@ -18,7 +18,7 @@ internal sealed class App : GameApplication
     {
         _serviceProvider = serviceProvider;
         Device.SyncToVerticalBlank = true;
-        Window.Title = "geam";
+        Window.Title = "hublou";
         ClearColor = RgbaFloat.Black;
     }
 
@@ -29,8 +29,6 @@ internal sealed class App : GameApplication
 
     protected override void Initialize()
     {
-        Window.Title = "Coyote";
-
         Layers.ConstructLayer<ImGuiLayer>(imGui =>
         {
             var io = ImGui.GetIO();
@@ -62,5 +60,12 @@ internal sealed class App : GameApplication
     public static EmbeddedResourceKey Asset(string name)
     {
         return new EmbeddedResourceKey(typeof(App).Assembly, $"Vizulacru.Assets.{name}");
+    }
+
+    protected override void Destroy()
+    {
+        ImGui.SaveIniSettingsToDisk("imgui_vizulacru.ini");
+
+        base.Destroy();
     }
 }

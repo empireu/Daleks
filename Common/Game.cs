@@ -19,16 +19,27 @@ public readonly struct Player
     public int GetAbilityLevel(AbilityType type) => type switch
     {
         AbilityType.Movement => Movement,
-        AbilityType.Dig => Dig,
+        AbilityType.Drill => Dig,
         AbilityType.Attack => Attack,
         AbilityType.Sight => Sight,
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+    };
+
+    public int GetUpgradeLevel(UpgradeType type) => type switch
+    {
+        UpgradeType.Sight => Sight,
+        UpgradeType.Attack => Attack,
+        UpgradeType.Drill => Dig,
+        UpgradeType.Movement => Movement,
+        UpgradeType.Antenna => HasAntenna ? 1 : 0,
+        UpgradeType.Battery => HasBattery ? 1 : 0,
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
     };
 
     public Player WithAbilityLevel(AbilityType type, int level) => type switch
     {
         AbilityType.Movement => this with { Movement = level },
-        AbilityType.Dig => this with { Dig = level },
+        AbilityType.Drill => this with { Dig = level },
         AbilityType.Attack => this with { Attack = level },
         AbilityType.Sight => this with { Sight = level },
         _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
@@ -105,12 +116,19 @@ public sealed class CommandState
 
         return true;
     }
-    
+
+    public bool IsMined(Direction direction) => _actions.Any(a => a.Type == ActionType.Mine && a.Dir == direction);
+
     public bool Mine(Direction direction)
     {
         if (_actions.Any(a => a.Type != ActionType.Mine))
         {
             throw new Exception($"Cannot use mine action over {string.Join(", ", Actions)}");
+        }
+
+        if (IsMined(direction))
+        {
+            return false;
         }
 
         if (RemainingMines < 0)
@@ -128,6 +146,25 @@ public sealed class CommandState
         return true;
     }
 
+    public bool Place(Direction direction)
+    {
+        if (!CouldPlace)
+        {
+            return false;
+        }
+
+        ValidateExclusiveAction();
+
+        PushState(p => p with
+        {
+            CobbleCount = p.CobbleCount - 1
+        });
+
+        _actions.Add(new ActionCommand(ActionType.Place, direction));
+
+        return true;
+    }
+
     public void Attack(Direction dir)
     {
         ValidateExclusiveAction();
@@ -139,6 +176,7 @@ public sealed class CommandState
     public bool CouldHeal => Tail.Player is { OsmiumCount: > 0, Hp: < 15 };
     public bool CouldBuyBattery => Tail.Player is { IronCount: >= 1, OsmiumCount: >= 1 };
     public bool CouldBuyAntenna => Tail.Player is { IronCount: >= 2, OsmiumCount: >= 1 };
+    public bool CouldPlace => Tail.Player is { CobbleCount: >= 1 };
 
     public bool BuyBattery()
     {
@@ -195,7 +233,7 @@ public sealed class CommandState
         var upgrade = type switch 
         {
             AbilityType.Movement => BuyType.Movement,
-            AbilityType.Dig => BuyType.Drill,
+            AbilityType.Drill => BuyType.Drill,
             AbilityType.Attack => BuyType.Attack,
             AbilityType.Sight => BuyType.Sight,
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, $"Unexpected ability {type}")
@@ -322,6 +360,18 @@ public sealed class CommandState
         return true;
     }
 
+    public void Scan(Direction dir)
+    {
+        ValidateExclusiveAction();
+
+        if (!Head.Player.HasAntenna)
+        {
+            throw new Exception("Cannot activate antenna");
+        }
+
+        _actions.Add(new ActionCommand(ActionType.Scan, dir));
+    }
+
     public string Serialize()
     {
         var sb = new StringBuilder();
@@ -384,15 +434,15 @@ public sealed class ActionCommand
     }
 }
 
-public enum AbilityType
+public enum AbilityType : byte
 {
     Movement,
-    Dig,
+    Drill,
     Attack,
     Sight,
 }
 
-public enum BuyType
+public enum BuyType : byte
 {
     Sight,
     Attack,
@@ -403,7 +453,17 @@ public enum BuyType
     Heal
 }
 
-public enum ActionType
+public enum UpgradeType : byte
+{
+    Sight,
+    Attack,
+    Drill,
+    Movement,
+    Antenna,
+    Battery,
+}
+
+public enum ActionType : byte
 {
     Attack,
     Mine,
@@ -411,7 +471,7 @@ public enum ActionType
     Place
 }
 
-public enum TileType
+public enum TileType : byte
 {
     Unknown,
     Dirt,
@@ -427,18 +487,16 @@ public enum TileType
 
 public sealed class GameSnapshot
 {
-    public int Round { get; }
-
     private readonly Grid<TileType> _grid;
     private readonly HashSet<Vector2di> _discoveredTiles = new();
     private readonly HashMultiMap<TileType, Vector2di> _discoveredTileTypes = new();
 
     public IReadOnlyGrid<TileType> Grid => _grid;
-
     public Vector2di GridSize => _grid.Size;
-
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
     public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTileTypes => _discoveredTileTypes;
+
+    public int Round { get; }
 
     private GameSnapshot(Grid<TileType> grid, int round, HashSet<Vector2di> discoveredTiles, HashMultiMap<TileType, Vector2di> discoveredTileTypes)
     {
@@ -456,6 +514,54 @@ public sealed class GameSnapshot
 
     public Player Player { get; private set; }
 
+    public TileType this[int x, int y] => _grid[x, y];
+    public TileType this[Vector2di v] => _grid[v.X, v.Y];
+    public bool IsWithinBounds(int x, int y) => _grid.IsWithinBounds(x, y);
+    public bool IsWithinBounds(Vector2di v) => _grid.IsWithinBounds(v);
+    
+    public GameSnapshot Bind(Player player)
+    {
+        return new GameSnapshot(_grid, Round, _discoveredTiles, _discoveredTileTypes)
+        {
+            Player = player
+        };
+    }
+
+    public TileType Neighbor(Direction dir) => this[Player.Position + dir]; // Bedrock will not allow going out of bounds
+
+    private void ScanView()
+    {
+        var queue = new Queue<Vector2di>();
+
+        queue.Enqueue(Player.Position);
+
+        while (queue.Count > 0)
+        {
+            var front = queue.Dequeue();
+
+            if (!_discoveredTiles.Add(front))
+            {
+                continue;
+            }
+
+            _discoveredTileTypes.Add(this[front], front);
+
+            for (byte i = 0; i < 4; i++)
+            {
+                var direction = (Direction)i;
+
+                var targetPos = front + direction;
+
+                if (IsWithinBounds(targetPos) && this[targetPos] != TileType.Unknown)
+                {
+                    queue.Enqueue(targetPos);
+                }
+            }
+        }
+    }
+
+    #region Parser
+
     private static Vector2di PopTuple(ref Span<string> lines)
     {
         var result = lines[0].Map(str =>
@@ -469,11 +575,6 @@ public sealed class GameSnapshot
 
         return result;
     }
-
-    public TileType this[int x, int y] => _grid[x, y];
-    public TileType this[Vector2di v] => _grid[v.X, v.Y];
-    public bool IsWithinBounds(int x, int y) => _grid.IsWithinBounds(x, y);
-    public bool IsWithinBounds(Vector2di v) => _grid.IsWithinBounds(v);
 
     public static GameSnapshot Load(Span<string> lines, int round)
     {
@@ -526,48 +627,10 @@ public sealed class GameSnapshot
             OsmiumCount = int.Parse(inventoryTokens[2])
         };
 
-        state.ViewScan();
+        state.ScanView();
 
         return state;
     }
 
-    public GameSnapshot Bind(Player player)
-    {
-        return new GameSnapshot(_grid, Round, _discoveredTiles, _discoveredTileTypes)
-        {
-            Player = player
-        };
-    }
-
-    public TileType Neighbor(Direction dir) => this[Player.Position + dir]; // Bedrock will not allow going out of bounds
-
-    private void ViewScan()
-    {
-        var queue = new Queue<Vector2di>();
-        queue.Enqueue(Player.Position);
-
-        while (queue.Count > 0)
-        {
-            var front = queue.Dequeue();
-
-            if (!_discoveredTiles.Add(front))
-            {
-                continue;
-            }
-
-            _discoveredTileTypes.Add(this[front], front);
-
-            for (byte i = 0; i < 4; i++)
-            {
-                var direction = (Direction)i;
-
-                var targetPos = front + direction;
-
-                if (IsWithinBounds(targetPos) && this[targetPos] != TileType.Unknown)
-                {
-                    queue.Enqueue(targetPos);
-                }
-            }
-        }
-    }
+    #endregion
 }

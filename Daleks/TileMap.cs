@@ -5,12 +5,14 @@ using System.Runtime.CompilerServices;
 
 namespace Daleks;
 
-public sealed class TileWorld : IReadOnlyGrid<TileType>
+public sealed class TileMap : IReadOnlyGrid<TileType>
 {
     private readonly Grid<AStarCell> _pathfindingGrid;
     private readonly Dictionary<TileType, float> _costMap;
 
-    public TileWorld(Vector2di size, Dictionary<TileType, float> costMap)
+    public float DiagonalPenalty { get; set; } = 3;
+
+    public TileMap(Vector2di size, Dictionary<TileType, float> costMap)
     {
         _costMap = costMap;
         Size = size;
@@ -45,7 +47,10 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
 
     private void ClearPathfindingData()
     {
-        Array.Fill(_pathfindingGrid.Storage, new AStarCell());
+        Array.Fill(_pathfindingGrid.Storage, new AStarCell
+        {
+            GCost = float.MaxValue
+        });
     }
 
     private CachedPath? _cachedPath;
@@ -65,7 +70,7 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
             // ReSharper disable once ForCanBeConvertedToForeach
             for (var i = 0; i < cache.Count; i++)
             {
-                if (Tiles[cache[i]].IsObstacle())
+                if (Tiles[cache[i]].IsUnbreakable())
                 {
                     goto pass;
                 }
@@ -111,7 +116,54 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float NeighborCost(Vector2di neighbor) => _costMap.TryGetValue(Tiles[neighbor], out var c) ? c : 1f;
+    private float EdgeCost(Vector2di neighbor) => _costMap.TryGetValue(Tiles[neighbor], out var c) ? c : 1f;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float DiagonalCost(Vector2di cPos)
+    {
+        var c = _pathfindingGrid[cPos];
+        if (!c.Ancestor.HasValue) return 0f;
+
+        var bPos = c.Ancestor.Value;
+
+        var b = _pathfindingGrid[bPos];
+        if (!b.Ancestor.HasValue) return 0f;
+
+        var aPos = b.Ancestor.Value;
+
+        var df = aPos - cPos;
+
+        if (df.X != 0 && df.Y != 0)
+        {
+            return DiagonalPenalty;
+        }
+
+        return 0f;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float Heuristic(Vector2di currentNode, Vector2di goal) =>
+        Vector2di.Manhattan(currentNode, goal);
+
+    private readonly struct Priority : IComparable<Priority>
+    {
+        public float FCost { get; init; }
+        public float HCost { get; init; }
+
+        public int CompareTo(Priority other) => FCost.Equals(other.FCost)
+            ? HCost.CompareTo(other.HCost)
+            : FCost.CompareTo(other.FCost);
+    }
+
+    /*private sealed class PriorityComparer : IComparer<Priority>
+    {
+        public int Compare(Priority x, Priority y)
+        {
+            return x.FCost.Equals(y.FCost) 
+                ? x.HCost.CompareTo(y.HCost) 
+                : x.FCost.CompareTo(y.FCost);
+        }
+    }*/
 
     private bool TryFindPathCore(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
     {
@@ -127,14 +179,19 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
             return true;
         }
 
-        var queue = new PriorityQueue<Vector2di, float>();
+        _pathfindingGrid[startPoint].GCost = 0;
 
-        _pathfindingGrid[startPoint] = new AStarCell(0, Vector2di.DistanceSqr(startPoint, goalPoint));
+        var queue = new PrioritySet<Vector2di, Priority>();
 
-        queue.Enqueue(startPoint, _pathfindingGrid[startPoint].FCost);
+        queue.Enqueue(startPoint, new Priority
+        {
+            FCost = Heuristic(startPoint, goalPoint)
+        });
 
         while (queue.TryDequeue(out var currentPoint, out _))
         {
+            ref var current = ref _pathfindingGrid[currentPoint];
+
             if (currentPoint == goalPoint)
             {
                 path = new List<Vector2di>();
@@ -143,7 +200,7 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
                 {
                     path.Add(goalPoint);
 
-                    goalPoint = _pathfindingGrid[goalPoint].Ancestor;
+                    goalPoint = _pathfindingGrid[goalPoint].Ancestor ?? throw new Exception("Expected ancestor");
 
                     if (goalPoint == startPoint)
                     {
@@ -158,46 +215,43 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
                 return true;
             }
 
-            ref var cell = ref _pathfindingGrid[currentPoint];
-
-            cell.Closed = true;
-            cell.InQueue = false;
-
             for (byte i = 0; i < 4; i++)
             {
-                var neighborPos = currentPoint + (Direction)i;
+                var neighborPoint = currentPoint + (Direction)i;
 
-                if (!Tiles.IsWithinBounds(neighborPos))
+                if (!Tiles.IsWithinBounds(neighborPoint) || Tiles[neighborPoint].IsUnbreakable())
                 {
                     continue;
                 }
 
-                ref var neighborCell = ref _pathfindingGrid[neighborPos];
+                ref var neighbor = ref _pathfindingGrid[neighborPoint];
 
-                if (Tiles[neighborPos].IsObstacle() || neighborCell.Closed)
+                var tentativeGScore = current.GCost + 1;
+
+                if (!(tentativeGScore < neighbor.GCost))
                 {
                     continue;
                 }
 
-                var currentGCost = neighborCell.GCost + NeighborCost(neighborPos);
+                neighbor.Ancestor = currentPoint;
+                neighbor.GCost = tentativeGScore;
+                    
+                var hCost = Heuristic(neighborPoint, goalPoint);
+                
+                var fCost = tentativeGScore + hCost + DiagonalCost(neighborPoint);
 
-                if (!neighborCell.InQueue)
+                if (_costMap.TryGetValue(this[neighborPoint.X, neighborPoint.Y], out var cost))
                 {
-                    neighborCell.InQueue = true;
+                    fCost += cost;
                 }
-                else if (currentGCost >= neighborCell.GCost)
+
+                queue.EnqueueOrUpdate(neighborPoint, new Priority
                 {
-                    continue;
-                }
-
-                neighborCell.Ancestor = currentPoint;
-                neighborCell.GCost = currentGCost;
-                neighborCell.FCost = currentGCost + Vector2di.DistanceSqr(neighborPos, goalPoint);
-
-                queue.Enqueue(neighborPos, neighborCell.FCost);
+                    FCost = fCost,
+                    HCost = hCost
+                });
             }
         }
-
         path = null;
 
         return false;
@@ -274,17 +328,8 @@ public sealed class TileWorld : IReadOnlyGrid<TileType>
     private struct AStarCell
     {
         public float GCost;
-        public float FCost;
-        public bool InQueue;
-        public bool Closed;
 
-        public Vector2di Ancestor;
-
-        public AStarCell(float gCost, float fCost)
-        {
-            GCost = gCost;
-            FCost = fCost;
-        }
+        public Vector2di? Ancestor;
     }
 
     private sealed class CachedPath

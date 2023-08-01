@@ -23,13 +23,13 @@ namespace Vizulacru;
 
 internal sealed class UnexploredTreeRenderer
 {
-    private readonly TileWorld _world;
+    private readonly TileMap _map;
     private readonly QuadBatch _batch;
     private int _lastVersion = -1;
 
-    public UnexploredTreeRenderer(TileWorld world, QuadBatch batch)
+    public UnexploredTreeRenderer(TileMap map, QuadBatch batch)
     {
-        _world = world;
+        _map = map;
         _batch = batch;
     }
 
@@ -37,14 +37,14 @@ internal sealed class UnexploredTreeRenderer
 
     public bool Update()
     {
-        if (_lastVersion == _world.UnexploredTreeVersion)
+        if (_lastVersion == _map.UnexploredTreeVersion)
         {
             return false;
         }
 
         _batch.Clear();
 
-        var worldRectangle = new System.Drawing.Rectangle(0, 0, _world.Size.X, _world.Size.Y);
+        var worldRectangle = new System.Drawing.Rectangle(0, 0, _map.Size.X, _map.Size.Y);
 
         void Visit(IQuadTreeView node)
         {
@@ -93,9 +93,9 @@ internal sealed class UnexploredTreeRenderer
             }
         }
 
-        Visit(_world.UnexploredTree);
+        Visit(_map.UnexploredTree);
 
-        _lastVersion = _world.UnexploredTreeVersion;
+        _lastVersion = _map.UnexploredTreeVersion;
 
         return true;
     }
@@ -233,24 +233,23 @@ internal sealed class WorldLayer : Layer, IDisposable
             return _cameraController.Camera
                 .MouseToWorld2D(_app.Input.MousePosition, _app.Window.Width, _app.Window.Height).Map(mouseWorld =>
                     new Vector2di(
-                        Math.Clamp((int)Math.Round(mouseWorld.X), 0, _controller.TileWorld.Size.X - 1),
-                        Math.Clamp(-(int)Math.Round(mouseWorld.Y), 0, _controller.TileWorld.Size.Y - 1)
+                        Math.Clamp((int)Math.Round(mouseWorld.X), 0, _controller.TileMap.Size.X - 1),
+                        Math.Clamp(-(int)Math.Round(mouseWorld.Y), 0, _controller.TileMap.Size.Y - 1)
                     )
                 );
         }
     }
 
-    private void FocusCenter()
+    private bool _follow = true;
+
+    private void Focus()
     {
-        if (_controller == null)
+        if (_lastGameState == null)
         {
             return;
         }
 
-        var world = _controller.TileWorld;
-
-        _cameraController.FuturePosition2 = GridPos(world.Size.X / 2, world.Size.Y / 2);
-        _cameraController.FutureZoom = 35f;
+        _cameraController.FuturePosition2 = GridPos(_lastGameState.Player.Position);
     }
 
     public WorldLayer(App app, ImGuiLayer imGui, Textures textures, ILogger<RemoteGame> remoteGameLogger)
@@ -265,6 +264,8 @@ internal sealed class WorldLayer : Layer, IDisposable
             zoomInterpolate: 10f
         );
 
+        _cameraController.FutureZoom = 35;
+
         _dynamicBatch = app.Resources.BatchPool.Get();
         _unexploredTreeBatch = app.Resources.BatchPool.Get();
 
@@ -274,13 +275,13 @@ internal sealed class WorldLayer : Layer, IDisposable
         };
 
         UpdatePipelines();
-        FocusCenter();
+        Focus();
 
         _game = new RemoteGame(remoteGameLogger, app.SelectedId, 150);
 
         _imGui.Submit += ImGuiOnSubmit;
     }
-
+    
     private void ImGuiOnSubmit(ImGuiRenderer obj)
     {
         ImGui.DockSpaceOverViewport(ImGui.GetMainViewport(), ImGuiDockNodeFlags.PassthruCentralNode);
@@ -316,40 +317,53 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         var mouse = MouseGrid;
 
-        if (Begin("Tiles"))
+        if (Begin("Game"))
         {
-            ImGui.Text($"Mouse: {mouse}");
 
-            if (_controller != null)
+            if (_controller != null && _lastGameState != null)
             {
-                var world = _controller.TileWorld;
+                var world = _controller.TileMap;
+
+                ImGui.Text($"Round: {_lastGameState.Round}/{_controller.AcidRounds}");
+
+                ImGui.Checkbox("Follow", ref _follow);
+
+                ImGui.Separator();
+                ImGui.Text($"Mouse: {mouse}");
 
                 ImGui.Text($"Grid size: {world.Size}");
                 ImGui.Text($"Selected: {world[mouse.X, mouse.Y]}");
-
-                ImGui.Text($"Max overvisits: {_maxOverVisits}");
-                ImGui.Text($"Average overvisits: {_averageOverVisits:F4}");
+                ImGui.Text($"Discovery: {_controller.ExplorationMode}");
 
                 var ores = new Histogram<TileType>();
 
                 foreach (var position in _controller.PendingOres.Keys)
                 {
-                    ores[_controller.TileWorld.Tiles[position]]++;
+                    ores[_controller.TileMap.Tiles[position]]++;
                 }
-
+                
+                ImGui.Indent();
+                
                 foreach (var type in ores.Keys)
                 {
                     ImGui.Text($"{type}: {ores[type]}");
                 }
 
+                ImGui.Unindent();
+
+                ImGui.Separator();
+
                 if (_controller.UpgradeQueue.Count > 0)
                 {
                     ImGui.Text("Upgrade queue:");
+                    
                     ImGui.Indent();
+                    
                     foreach (var abilityType in _controller.UpgradeQueue)
                     {
                         ImGui.Text(abilityType.ToString());
                     }
+                    
                     ImGui.Unindent();
                 }
             }
@@ -382,7 +396,7 @@ internal sealed class WorldLayer : Layer, IDisposable
     {
         if (arg is { Key: Key.F, Down: false })
         {
-            FocusCenter();
+            Focus();
         }
 
         return true;
@@ -422,11 +436,6 @@ internal sealed class WorldLayer : Layer, IDisposable
         _cameraController.Update(frameInfo.DeltaTime);
     }
 
-    private readonly Histogram<Vector2di> _overviewHistogram = new();
-
-    private int _maxOverVisits;
-    private double _averageOverVisits;
-
     private void UpdateGame()
     {
         if (!_game.TryRead(out var state))
@@ -434,40 +443,23 @@ internal sealed class WorldLayer : Layer, IDisposable
             return;
         }
 
-        foreach (var tile in state.DiscoveredTiles)
-        {
-            _overviewHistogram[tile]++;
-        }
-
-        _maxOverVisits = 0;
-        _averageOverVisits = 0;
-
-        foreach (var tile in _overviewHistogram.Keys)
-        {
-            var visits = _overviewHistogram[tile];
-            _maxOverVisits = Math.Max(_maxOverVisits, visits);
-            _averageOverVisits += visits;
-        }
-
-        if (_overviewHistogram.Keys.Count > 0)
-        {
-            _averageOverVisits /= _overviewHistogram.Keys.Count;
-        }
-
         _controller ??= new Bot(_game.Match, _game.AcidRounds, new BotConfig());
 
         var cl = new CommandState(state, _game.Match.BasePosition);
 
         _controller.Update(cl);
-
         _game.Submit(cl);
-
         _lastGameState = state;
     }
 
     protected override void Update(FrameInfo frameInfo)
     {
         base.Update(frameInfo);
+        
+        if (_follow)
+        {
+            Focus();
+        }
 
         UpdateCamera(frameInfo);
         UpdateGame();
@@ -490,7 +482,7 @@ internal sealed class WorldLayer : Layer, IDisposable
             return;
         }
 
-        var world = _controller.TileWorld;
+        var world = _controller.TileMap;
         var playerPos = Assert.NotNull(_lastGameState).Player.Position;
 
         var unknownColor = new RgbaFloat4(18 / 255f, 18 / 255f, 18 / 255f, 1f);
@@ -510,37 +502,33 @@ internal sealed class WorldLayer : Layer, IDisposable
                 }
                 else
                 {
-                    _dynamicBatch.TexturedQuad(pos, scale, type switch
+                    TextureSampler ts;
+
+                    if (playerPos.X == x && playerPos.Y == y)
                     {
-                        TileType.Dirt => _textures.DirtTile,
-                        TileType.Stone => _textures.StoneTile,
-                        TileType.Cobblestone => _textures.CobblestoneTile,
-                        TileType.Bedrock => _textures.BedrockTile,
-                        TileType.Iron => _textures.IronTile,
-                        TileType.Osmium => _textures.OsmiumTile,
-                        TileType.Base => _textures.BaseTile,
-                        TileType.Acid => _textures.AcidTile,
-                        TileType.Robot => (playerPos.X == x && playerPos.Y == y) ? _textures.PlayerRobotTile : _textures.EnemyRobotTile,
-                        _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown texture for {type}")
-                    });
+                        ts = _textures.PlayerRobotTile;
+                    }
+                    else
+                    {
+                        ts = type switch
+                        {
+                            TileType.Dirt => _textures.DirtTile,
+                            TileType.Stone => _textures.StoneTile,
+                            TileType.Cobblestone => _textures.CobblestoneTile,
+                            TileType.Bedrock => _textures.BedrockTile,
+                            TileType.Iron => _textures.IronTile,
+                            TileType.Osmium => _textures.OsmiumTile,
+                            TileType.Base => _textures.BaseTile,
+                            TileType.Acid => _textures.AcidTile,
+                            TileType.Robot => _textures.EnemyRobotTile,
+                            _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown texture for {type}")
+                        };
+                    }
+
+                    _dynamicBatch.TexturedQuad(pos, scale, ts);
                 }
             }
         }
-
-        /*for (var index = 1; index < _controller.SearchGrid.C.Count; index++)
-        {
-            var g = _controller.SearchGrid.C[index];
-            var rnd = new Random(g.GetHashCode());
-            var colo = rnd.NextVector4(min: 0f) with { W = 0.3f };
-
-            var a = _controller.SearchGrid.C[index - 1];
-            var b = _controller.SearchGrid.C[index ];
-
-            Vector2 p(SearchGrid.Node n) => GridPos(n.Rect.X + n.Rect.Width / 2f, n.Rect.Y + n.Rect.Height / 2f);
-
-            _dynamicBatch.Line(p(a), p(b), colo, 0.1f);
-
-        }*/
     }
 
     private void RenderView()
@@ -598,7 +586,7 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         if (_renderUnexploredTree && _controller != null)
         {
-            _unexploredTreeRenderer ??= new UnexploredTreeRenderer(_controller.TileWorld, _unexploredTreeBatch);
+            _unexploredTreeRenderer ??= new UnexploredTreeRenderer(_controller.TileMap, _unexploredTreeBatch);
             _unexploredTreeRenderer.Update();
             _unexploredTreeBatch.Effects = QuadBatchEffects.Transformed(_cameraController.Camera.CameraMatrix);
             _unexploredTreeBatch.Submit(framebuffer: _postProcess.InputFramebuffer);

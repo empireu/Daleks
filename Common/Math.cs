@@ -1,4 +1,6 @@
-﻿namespace Common;
+﻿using System.Runtime.CompilerServices;
+
+namespace Common;
 
 public enum Direction : byte
 {
@@ -14,6 +16,7 @@ public readonly struct Vector2di : IComparable<Vector2di>
     public int Y { get; }
     public int NormSqr => X * X + Y * Y;
     public double Norm => Math.Sqrt(NormSqr);
+    public float NormF => MathF.Sqrt(NormSqr);
 
     private static readonly Direction[] Directions = Enum.GetValues<Direction>(); 
 
@@ -60,8 +63,9 @@ public readonly struct Vector2di : IComparable<Vector2di>
     public static readonly Vector2di One = new(1, 1);
 
     public static int DistanceSqr(Vector2di a, Vector2di b) => (a - b).NormSqr;
-
     public static double Distance(Vector2di a, Vector2di b) => (a - b).Norm;
+    public static float DistanceF(Vector2di a, Vector2di b) => (a - b).NormF;
+    public static int Manhattan(Vector2di a, Vector2di b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
 
     public int CompareTo(Vector2di other) => this.NormSqr.CompareTo(other.NormSqr);
 }
