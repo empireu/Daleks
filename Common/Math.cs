@@ -12,18 +12,24 @@ public enum Direction : byte
 
 public readonly struct Vector2di : IComparable<Vector2di>
 {
-    public int X { get; }
-    public int Y { get; }
+    public short X { get; }
+    public short Y { get; }
     public int NormSqr => X * X + Y * Y;
     public double Norm => Math.Sqrt(NormSqr);
     public float NormF => MathF.Sqrt(NormSqr);
 
     private static readonly Direction[] Directions = Enum.GetValues<Direction>(); 
 
-    public Vector2di(int x, int y)
+    public Vector2di(short x, short y)
     {
         X = x;
         Y = y;
+    }
+
+    public Vector2di(int x, int y)
+    {
+        X = (short)x;
+        Y = (short)y;
     }
 
     public override string ToString() => $"X={X}, Y={Y}";

@@ -13,7 +13,11 @@
     <None Remove="Assets\Images\Tiles\Bedrock.png" />
     <None Remove="Assets\Images\Tiles\Cobblestone.png" />
     <None Remove="Assets\Images\Tiles\Dirt.png" />
-    <None Remove="Assets\Images\Tiles\Enemy.png" />
+    <None Remove="Assets\Images\Tiles\Enemy0.png" />
+    <None Remove="Assets\Images\Tiles\Enemy1.png" />
+    <None Remove="Assets\Images\Tiles\Enemy2.png" />
+    <None Remove="Assets\Images\Tiles\Enemy3.png" />
+    <None Remove="Assets\Images\Tiles\Enemy4.png" />
     <None Remove="Assets\Images\Tiles\Iron.png" />
     <None Remove="Assets\Images\Tiles\Osmium.png" />
     <None Remove="Assets\Images\Tiles\Player.png" />
@@ -26,7 +30,11 @@
     <EmbeddedResource Include="Assets\Images\Tiles\Bedrock.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Cobblestone.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Dirt.png" />
-    <EmbeddedResource Include="Assets\Images\Tiles\Enemy.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Enemy0.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Enemy1.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Enemy2.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Enemy3.png" />
+    <EmbeddedResource Include="Assets\Images\Tiles\Enemy4.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Iron.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Osmium.png" />
     <EmbeddedResource Include="Assets\Images\Tiles\Player.png" />

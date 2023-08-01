@@ -21,86 +21,6 @@ using Vizulacru.Assets;
 
 namespace Vizulacru;
 
-internal sealed class UnexploredTreeRenderer
-{
-    private readonly TileMap _map;
-    private readonly QuadBatch _batch;
-    private int _lastVersion = -1;
-
-    public UnexploredTreeRenderer(TileMap map, QuadBatch batch)
-    {
-        _map = map;
-        _batch = batch;
-    }
-
-    private readonly Dictionary<Vector2di, Vector4> _nodeColors = new();
-
-    public bool Update()
-    {
-        if (_lastVersion == _map.UnexploredTreeVersion)
-        {
-            return false;
-        }
-
-        _batch.Clear();
-
-        var worldRectangle = new System.Drawing.Rectangle(0, 0, _map.Size.X, _map.Size.Y);
-
-        void Visit(IQuadTreeView node)
-        {
-            if (!node.NodeRectangle.IntersectsWith(worldRectangle))
-            {
-                return;
-            }
-
-            var tl = new Vector2(node.Position.X, -node.Position.Y) - new Vector2(0.5f, -0.5f);
-            var sz = node.Size;
-
-            if (node.IsFilled || node.Size == 1)
-            {
-                _batch.Quad(tl + new Vector2(sz / 2f, -sz / 2f), new Vector2(0.1f), RgbaFloat4.Red);
-            }
-            else
-            {
-                var color = _nodeColors.GetOrAdd(node.Position, _ =>
-                {
-                    var random = new Random(node.Position.GetHashCode());
-
-                    return new Vector4(
-                        random.NextFloat(min: 0.5f),
-                        random.NextFloat(min: 0.5f),
-                        random.NextFloat(min: 0.5f),
-                        0.4f
-                    );
-                });
-
-                var dx = new Vector2(sz, 0);
-                var dy = new Vector2(0, sz);
-                var dx2 = dx / 2f;
-                var dy2 = dy / 2f;
-
-                for (byte i = 0; i < 4; i++)
-                {
-                    node.GetChildView((BitQuadTree.Quadrant)i)?.Also(Visit);
-                }
-
-                _batch.Line(tl, tl + dx, color, 0.1f);
-                _batch.Line(tl - dy, tl - dy + dx, color, 0.1f);
-                _batch.Line(tl, tl - dy, color, 0.1f);
-                _batch.Line(tl + dx, tl + dx - dy, color, 0.1f);
-                _batch.Line(tl - dy2, tl + dx - dy2, color, 0.1f);
-                _batch.Line(tl + dx2, tl + dx2 - dy, color, 0.1f);
-            }
-        }
-
-        Visit(_map.UnexploredTree);
-
-        _lastVersion = _map.UnexploredTreeVersion;
-
-        return true;
-    }
-}
-
 internal sealed class RemoteGame : IDisposable
 {
     private readonly ILogger<RemoteGame> _logger;
@@ -217,9 +137,7 @@ internal sealed class WorldLayer : Layer, IDisposable
 
     private readonly QuadBatch _dynamicBatch;
     private readonly QuadBatch _unexploredTreeBatch;
-    private UnexploredTreeRenderer? _unexploredTreeRenderer;
 
-    private bool _renderUnexploredTree = true;
     private bool _renderUnexploredRegion = true;
 
     private readonly PostProcessor _postProcess;
@@ -319,7 +237,6 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         if (Begin("Display"))
         {
-            ImGui.Checkbox("Show unexplored regions", ref _renderUnexploredTree);
             ImGui.Checkbox("Show unexplored target", ref _renderUnexploredRegion);
         }
 
@@ -444,7 +361,14 @@ internal sealed class WorldLayer : Layer, IDisposable
                         prevDepth--;
                     }
 
-                    ImGui.Text(log.Text);
+                    ImGui.TextColored(log.Type switch
+                    {
+                        LogType.Info => new Vector4(0, 1, 0, 1),
+                        LogType.Warning => new Vector4(1, 1, 0, 1),
+                        LogType.Peril => new Vector4(0.7f, 0, 0, 1),
+                        LogType.FTL => new Vector4(1, 0, 0, 1),
+                        _ => throw new ArgumentOutOfRangeException()
+                    }, log.Text);
                 }
             }
 
@@ -594,13 +518,17 @@ internal sealed class WorldLayer : Layer, IDisposable
                         {
                             TileType.Dirt => _textures.DirtTile,
                             TileType.Stone => _textures.StoneTile,
-                            TileType.Cobblestone => _textures.CobblestoneTile,
+                            TileType.Cobble => _textures.CobblestoneTile,
                             TileType.Bedrock => _textures.BedrockTile,
                             TileType.Iron => _textures.IronTile,
                             TileType.Osmium => _textures.OsmiumTile,
                             TileType.Base => _textures.BaseTile,
                             TileType.Acid => _textures.AcidTile,
-                            TileType.Robot => _textures.EnemyRobotTile,
+                            TileType.Robot0 => _textures.Enemy0Tile,
+                            TileType.Robot1 => _textures.Enemy1Tile,
+                            TileType.Robot2 => _textures.Enemy2Tile,
+                            TileType.Robot3 => _textures.Enemy3Tile,
+                            TileType.Robot4 => _textures.Enemy4Tile,
                             _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown texture for {type}")
                         };
                     }
@@ -698,15 +626,6 @@ internal sealed class WorldLayer : Layer, IDisposable
         RenderPass(RenderTerrain);
         RenderPass(RenderAttackHistory);
         RenderPass(RenderView);
-
-        if (_renderUnexploredTree && _controller != null)
-        {
-            _unexploredTreeRenderer ??= new UnexploredTreeRenderer(_controller.TileMap, _unexploredTreeBatch);
-            _unexploredTreeRenderer.Update();
-            _unexploredTreeBatch.Effects = QuadBatchEffects.Transformed(_cameraController.Camera.CameraMatrix);
-            _unexploredTreeBatch.Submit(framebuffer: _postProcess.InputFramebuffer);
-        }
-
         RenderPass(RenderUnexploredTarget);
         RenderPass(RenderPath);
 

@@ -67,10 +67,10 @@ public sealed class CommandState
     public IReadOnlyList<GameSnapshot> States => _states;
 
     public GameSnapshot Head => _states.First();
-
     public GameSnapshot Tail => _states.Last();
+
     public IReadOnlySet<Vector2di> DiscoveredTiles => Head.DiscoveredTiles;
-    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTileTypes => Head.DiscoveredTileTypes;
+    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTilesMulti => Head.DiscoveredTilesMulti;
 
     public bool HasAction => _actions.Any();
 
@@ -84,9 +84,7 @@ public sealed class CommandState
 
     // Head because upgrades are applied next round
     public int RemainingMovements => Head.Player.Movement - _moves.Count;
-
     public int RemainingMines => Head.Player.Dig - (_actions.Count == 0 ? 0 : _actions.Sum(x => x.Type == ActionType.Mine ? 1 : 0));
-
     public bool CanMove => RemainingMovements > 0;
 
     // Head because upgrades and movements are applied next round
@@ -117,7 +115,7 @@ public sealed class CommandState
         return true;
     }
 
-    public bool IsMined(Direction direction) => _actions.Any(a => a.Type == ActionType.Mine && a.Dir == direction);
+    public bool IsMining(Direction direction) => _actions.Any(a => a.Type == ActionType.Mine && a.Dir == direction);
 
     public bool Mine(Direction direction)
     {
@@ -126,7 +124,7 @@ public sealed class CommandState
             throw new Exception($"Cannot use mine action over {string.Join(", ", Actions)}");
         }
 
-        if (IsMined(direction))
+        if (IsMining(direction))
         {
             return false;
         }
@@ -262,76 +260,6 @@ public sealed class CommandState
 
             _upgrades.Add(upgrade);
 
-            return true;
-        }
-
-        return false;
-    }
-
-    public bool BuyAttack()
-    {
-        if (Tail.Player.Attack == 3)
-        {
-            return false;
-        }
-
-        if (Tail.Player is { Attack: 1, IronCount: >= 3 })
-        {
-            PushState(p => p with
-            {
-                Attack = 2,
-                IronCount = Tail.Player.IronCount - 3
-            });
-
-            _upgrades.Add(BuyType.Attack);
-
-            return true;
-        }
-
-        if (Tail.Player is { Attack: 2, IronCount: >= 6, OsmiumCount: >= 1 })
-        {
-            PushState(p => p with
-            {
-                Attack = 3,
-                IronCount = Tail.Player.IronCount - 6,
-                OsmiumCount = Tail.Player.OsmiumCount - 1
-            });
-
-            _upgrades.Add(BuyType.Attack);
-            
-            return true;
-        }
-
-        return false;
-    }
-
-    public bool BuySight()
-    {
-        if (Tail.Player.Sight == 3)
-        {
-            return false;
-        }
-
-        if (Tail.Player is { Sight: 1, IronCount: >= 3 })
-        {
-            PushState(Tail.Bind(Tail.Player with
-            {
-                Sight = 2,
-                IronCount = Tail.Player.IronCount - 3
-            }));
-            _upgrades.Add(BuyType.Sight);
-            return true;
-        }
-
-        if (Tail.Player is { Sight: 2, IronCount: >= 6, OsmiumCount: >= 1 })
-        {
-            PushState(Tail.Bind(Tail.Player with
-            {
-                Sight = 3,
-                IronCount = Tail.Player.IronCount - 6,
-                OsmiumCount = Tail.Player.OsmiumCount - 1
-            }));
-            _upgrades.Add(BuyType.Sight);
             return true;
         }
 
@@ -476,33 +404,37 @@ public enum TileType : byte
     Unknown,
     Dirt,
     Stone,
-    Cobblestone,
+    Cobble,
     Bedrock,
     Iron,
     Osmium,
     Base,
     Acid,
-    Robot
+    Robot0,
+    Robot1,
+    Robot2,
+    Robot3,
+    Robot4,
 }
 
-public sealed class GameSnapshot
+public sealed class GameSnapshot : IReadOnlyGrid<TileType>
 {
     private readonly Grid<TileType> _grid;
     private readonly HashSet<Vector2di> _discoveredTiles = new();
-    private readonly HashMultiMap<TileType, Vector2di> _discoveredTileTypes = new();
+    private readonly HashMultiMap<TileType, Vector2di> _discoveredTilesMulti = new();
 
     public IReadOnlyGrid<TileType> Grid => _grid;
-    public Vector2di GridSize => _grid.Size;
+    public Vector2di Size => _grid.Size;
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
-    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTileTypes => _discoveredTileTypes;
+    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTilesMulti => _discoveredTilesMulti;
 
     public int Round { get; }
 
-    private GameSnapshot(Grid<TileType> grid, int round, HashSet<Vector2di> discoveredTiles, HashMultiMap<TileType, Vector2di> discoveredTileTypes)
+    private GameSnapshot(Grid<TileType> grid, int round, HashSet<Vector2di> discoveredTiles, HashMultiMap<TileType, Vector2di> discoveredTilesMulti)
     {
         _grid = grid;
         _discoveredTiles = discoveredTiles;
-        _discoveredTileTypes = discoveredTileTypes;
+        _discoveredTilesMulti = discoveredTilesMulti;
         Round = round;
     }
 
@@ -521,13 +453,11 @@ public sealed class GameSnapshot
     
     public GameSnapshot Bind(Player player)
     {
-        return new GameSnapshot(_grid, Round, _discoveredTiles, _discoveredTileTypes)
+        return new GameSnapshot(_grid, Round, _discoveredTiles, _discoveredTilesMulti)
         {
             Player = player
         };
     }
-
-    public TileType Neighbor(Direction dir) => this[Player.Position + dir]; // Bedrock will not allow going out of bounds
 
     private void ScanView()
     {
@@ -544,7 +474,7 @@ public sealed class GameSnapshot
                 continue;
             }
 
-            _discoveredTileTypes.Add(this[front], front);
+            _discoveredTilesMulti.Add(this[front], front);
 
             for (byte i = 0; i < 4; i++)
             {
@@ -593,14 +523,19 @@ public sealed class GameSnapshot
                 {
                     '.' => TileType.Dirt,
                     'X' => TileType.Stone,
-                    'A' => TileType.Cobblestone,
+                    'A' => TileType.Cobble,
                     'B' => TileType.Bedrock,
                     'C' => TileType.Iron,
                     'D' => TileType.Osmium,
                     'E' => TileType.Base,
                     'F' => TileType.Acid,
                     '?' => TileType.Unknown,
-                    _ => char.IsDigit(c) ? TileType.Robot : throw new Exception($"Invalid tile {c}")
+                    '0' => TileType.Robot0,
+                    '1' => TileType.Robot1,
+                    '2' => TileType.Robot2,
+                    '3' => TileType.Robot3,
+                    '4' => TileType.Robot4,
+                    _ => throw new Exception($"Invalid tile {c}")
                 };
             }
         }
@@ -633,4 +568,13 @@ public sealed class GameSnapshot
     }
 
     #endregion
+}
+
+public static class Tiles
+{
+    public static bool IsRobot(this TileType type) => type is TileType.Robot0 or TileType.Robot1 or TileType.Robot2 or TileType.Robot3 or TileType.Robot4;
+
+    public static bool IsUnbreakable(this TileType type) => type is TileType.Bedrock;
+
+    public static bool IsWalkable(this TileType type) => type is TileType.Dirt or TileType.Base or TileType.Acid or TileType.Unknown;
 }

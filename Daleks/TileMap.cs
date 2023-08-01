@@ -1,68 +1,124 @@
-﻿using Common;
+﻿using System.Diagnostics;
+using Common;
 using System.Diagnostics.CodeAnalysis;
-using System.Numerics;
 using System.Runtime.CompilerServices;
+using Vector2di = Common.Vector2di;
 
 namespace Daleks;
 
 public sealed class TileMap : IReadOnlyGrid<TileType>
 {
-    private readonly Grid<AStarCell> _pathfindingGrid;
-    private readonly Dictionary<TileType, float> _costMap;
+    private readonly float _diagonalPenalty;
+    private readonly Grid<PathfindingCell> _pathfindingGrid;
+    private readonly float[] _costMap;
 
-    public float DiagonalPenalty { get; set; } = 3;
-
-    public TileMap(Vector2di size, Dictionary<TileType, float> costMap)
+    public TileMap(Vector2di size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
     {
-        _costMap = costMap;
+        _diagonalPenalty = diagonalPenalty;
+     
+        _costMap = Enum
+            .GetValues<TileType>()
+            .OrderBy(x => (int)x)
+            .Select(type => costMap.TryGetValue(type, out var cost) ? cost : 0f)
+            .ToArray();
+
+        foreach (var (t, cost) in costMap)
+        {
+            if (!_costMap[(int)t].Equals(cost))
+            {
+                throw new Exception("Validation failed");
+            }
+
+            if (cost < 0)
+            {
+                throw new Exception($"Invalid cost {cost}");
+            }
+        }
+
+        if (diagonalPenalty < 0)
+        {
+            throw new Exception($"Invalid diagonal penalty {diagonalPenalty}");
+        }
+
         Size = size;
         Tiles = new Grid<TileType>(size);
 
         Array.Fill(Tiles.Storage, TileType.Unknown);
 
-        _pathfindingGrid = new Grid<AStarCell>(size);
+        _pathfindingGrid = new Grid<PathfindingCell>(size);
+
         ClearPathfindingData();
-
-        _unexploredTree = new BitQuadTree(Vector2di.Zero, Math.Max(size.X, size.Y));
-
-        // Very slow but we're doing it once
-
-        //for (var y = 1; y < size.Y - 1; y++)
-        //{
-        //    for (var x = 1; x < size.X - 1; x++)
-        //    {
-        //        _unexploredTree.Insert(new Vector2di(x, y));
-        //    }
-        //}
     }
     
-    public Vector2di Size { get; private set; }
+    public Vector2di Size { get; }
+
     public Grid<TileType> Tiles { get; }
-
-    private readonly BitQuadTree _unexploredTree;
-
-    public int UnexploredTreeVersion { get; private set; }
-
-    public IQuadTreeView UnexploredTree => _unexploredTree;
-
+    
     private void ClearPathfindingData()
     {
-        Array.Fill(_pathfindingGrid.Storage, new AStarCell
+        Array.Fill(_pathfindingGrid.Storage, new PathfindingCell
         {
-            GScore = float.MaxValue
+            Ancestor = null,
+            Cost = float.MaxValue,
+            IsVisited = false,
         });
     }
 
     private CachedPath? _cachedPath;
 
+    public bool CanAccess(Vector2di startPoint, Vector2di goalPoint)
+    {
+        if (Tiles[startPoint].IsUnbreakable() || Tiles[goalPoint].IsUnbreakable())
+        {
+            return false;
+        }
+
+        var queue = new PriorityQueue<Vector2di, float>();
+
+        float Heuristic(Vector2di p) => Vector2di.Manhattan(p, goalPoint);
+
+        queue.Enqueue(startPoint, Heuristic(startPoint));
+
+        var visited = new HashSet<Vector2di>();
+
+        while (queue.Count > 0)
+        {
+            var front = queue.Dequeue();
+
+            if (front == goalPoint)
+            {
+                return true;
+            }
+
+            if (!visited.Add(front))
+            {
+                continue;
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                var neighbor = front + (Direction)i;
+
+                if (Tiles.IsWithinBounds(neighbor) && !Tiles[neighbor].IsUnbreakable())
+                {
+                    queue.Enqueue(neighbor, Heuristic(neighbor));
+                }
+            }
+        }
+
+        return false;
+    }
+
     public bool TryFindPath(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
     {
+        CanAccess(startPoint, goalPoint);
+
         void EvictCache()
         {
             _cachedPath = null;
         }
 
-        if (_cachedPath != null && _cachedPath.GoalPos == goalPoint)
+        if (_cachedPath != null && _cachedPath.Goal == goalPoint)
         {
             var queue = new Queue<Vector2di>(_cachedPath.Path);
             var cache = _cachedPath.Path;
@@ -96,11 +152,10 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             }
 
             pass:
-
             EvictCache();
         }
 
-        var successful = TryFindPathCore(startPoint, goalPoint, out path);
+        var successful = FindPathCore(startPoint, goalPoint, out path);
         
         ClearPathfindingData();
 
@@ -132,27 +187,13 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
         if (df.X != 0 && df.Y != 0)
         {
-            return DiagonalPenalty;
+            return _diagonalPenalty;
         }
 
         return 0f;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Heuristic(Vector2di currentNode, Vector2di goal) =>
-        Vector2di.Manhattan(currentNode, goal);
-
-    private readonly struct Priority : IComparable<Priority>
-    {
-        public float FCost { get; init; }
-        public float HCost { get; init; }
-
-        public int CompareTo(Priority other) => FCost.Equals(other.FCost)
-            ? HCost.CompareTo(other.HCost)
-            : FCost.CompareTo(other.FCost);
-    }
-
-    private bool TryFindPathCore(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
+    private bool FindPathCore(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
     {
         if (!Tiles.IsWithinBounds(startPoint) || !Tiles.IsWithinBounds(goalPoint))
         {
@@ -166,18 +207,15 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             return true;
         }
 
-        _pathfindingGrid[startPoint].GScore = 0;
+        var queue = new PrioritySet<Vector2di, float>();
+        
+        queue.Enqueue(startPoint, 0);
+     
+        _pathfindingGrid[startPoint].Cost = 0;
 
-        var queue = new PrioritySet<Vector2di, Priority>();
-
-        queue.Enqueue(startPoint, new Priority
+        while (queue.Count > 0)
         {
-            FCost = Heuristic(startPoint, goalPoint)
-        });
-
-        while (queue.TryDequeue(out var currentPoint, out _))
-        {
-            ref var current = ref _pathfindingGrid[currentPoint];
+            var currentPoint = queue.Dequeue();
 
             if (currentPoint == goalPoint)
             {
@@ -202,131 +240,76 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                 return true;
             }
 
-            for (byte i = 0; i < 4; i++)
+            var currentCell = _pathfindingGrid[currentPoint];
+
+            _pathfindingGrid[currentPoint].IsVisited = true;
+
+            for (var i = 0; i < 4; i++)
             {
                 var neighborPoint = currentPoint + (Direction)i;
 
-                if (!Tiles.IsWithinBounds(neighborPoint) || Tiles[neighborPoint].IsUnbreakable())
+                if (!IsWithinBounds(neighborPoint))
                 {
                     continue;
                 }
 
-                ref var neighbor = ref _pathfindingGrid[neighborPoint];
+                ref var neighborCell = ref _pathfindingGrid[neighborPoint];
 
-                var tentativeGScore = current.GScore + 1;
-
-                if (tentativeGScore > neighbor.GScore)
+                if (neighborCell.IsVisited)
                 {
                     continue;
                 }
 
-                neighbor.Ancestor = currentPoint;
-                neighbor.GScore = tentativeGScore;
-                    
-                var hCost = Heuristic(neighborPoint, goalPoint);
-                
-                var fCost = tentativeGScore + hCost + DiagonalCost(neighborPoint);
+                var type = Tiles[neighborPoint];
 
-                if (_costMap.TryGetValue(this[neighborPoint.X, neighborPoint.Y], out var cost))
+                if (type.IsUnbreakable())
                 {
-                    fCost += cost;
+                    continue;
                 }
 
-                queue.EnqueueOrUpdate(neighborPoint, new Priority
+                var newCost = currentCell.Cost + DiagonalCost(neighborPoint) + _costMap[(int)type] + 1f;
+
+                if (newCost < neighborCell.Cost)
                 {
-                    FCost = fCost,
-                    HCost = hCost
-                });
+                    neighborCell.Cost = newCost;
+                    neighborCell.Ancestor = currentPoint;
+                }
+
+                queue.EnqueueOrUpdate(neighborPoint, neighborCell.Cost);
             }
         }
+
         path = null;
-        Console.WriteLine("Exhausted queue");
+
         return false;
     }
 
     public TileType this[int x, int y] => Tiles[x, y];
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsWithinBounds(int x, int y) => Tiles.IsWithinBounds(x, y);
+  
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsWithinBounds(Vector2di v) => Tiles.IsWithinBounds(v);
 
-    public bool SetExplored(Vector2di v)
+    public struct PathfindingCell : IComparable<PathfindingCell>
     {
-        if (_unexploredTree.Remove(v))
-        {
-            UnexploredTreeVersion++;
-            return true;
-        }
-
-        return false;
-    }
-
-    public IQuadTreeView? GetUnexploredRegion(Vector2di position) => GetUnexploredRegionCore(_unexploredTree, position);
-
-    private IQuadTreeView? GetUnexploredRegionCore(BitQuadTree node, Vector2di position)
-    {
-        var p2 = new Vector2(position.X, position.Y);
-
-        while (true)
-        {
-            if (node.IsFilled || node.Size == 1)
-            {
-                return node;
-            }
-
-            var bestChild = node.GetChild(position);
-
-            if (bestChild == null)
-            {
-                var bestCost = float.MaxValue;
-
-                for (byte i = 0; i < 4; i++)
-                {
-                    var child = node.GetChild((BitQuadTree.Quadrant)i);
-
-                    if (child == null)
-                    {
-                        continue;
-                    }
-
-                    var rect = child.NodeRectangle;
-
-                    var dx = Math.Max(rect.X - p2.X, Math.Max(0, p2.X - rect.Right));
-                    var dy = Math.Min(rect.Y - p2.Y, Math.Min(0, p2.Y - rect.Bottom));
-                    var actualCost = dx * dx + dy * dy;
-
-                    if (actualCost < bestCost)
-                    {
-                        bestCost = actualCost;
-                        bestChild = child;
-                    }
-                }
-
-                if (bestChild == null)
-                {
-                    break;
-                }
-            }
-
-            node = bestChild;
-        }
-
-        return null;
-    }
-
-    private struct AStarCell
-    {
-        public float GScore;
-
         public Vector2di? Ancestor;
+        public float Cost;
+        public bool IsVisited;
+
+        public readonly int CompareTo(PathfindingCell other) => Cost.CompareTo(other.Cost);
     }
 
     private sealed class CachedPath
     {
-        public Vector2di GoalPos { get; }
+        public Vector2di Goal { get; }
+
         public List<Vector2di> Path { get; }
 
-        public CachedPath(Vector2di goalPos, List<Vector2di> path)
+        public CachedPath(Vector2di goal, List<Vector2di> path)
         {
-            GoalPos = goalPos;
+            Goal = goal;
             Path = path;
         }
 

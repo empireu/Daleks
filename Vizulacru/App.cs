@@ -89,6 +89,7 @@ internal sealed class App : GameApplication
     private float _exploreClosestBaseP;
     private float _exploreClosestBaseB;
     private Dictionary<TileType, float> _costs = new();
+    private float _diagonalPenalty;
     private List<UpgradeType> _upgrades = new(0);
     private int _reserveOsmium;
     private int _roundsMargin;
@@ -100,6 +101,7 @@ internal sealed class App : GameApplication
         _exploreClosestBaseP = cfg.ExploreCostMultipliers[Bot.ExploreMode.ClosestBase].Player;
         _exploreClosestBaseB = cfg.ExploreCostMultipliers[Bot.ExploreMode.ClosestBase].Base;
         _costs = new Dictionary<TileType, float>(cfg.CostMap);
+        _diagonalPenalty = cfg.DiagonalPenalty;
         _upgrades = cfg.UpgradeList.ToList();
         _reserveOsmium = cfg.ReserveOsmium;
         _roundsMargin = cfg.RoundsMargin;
@@ -150,6 +152,8 @@ internal sealed class App : GameApplication
 
                 ImGui.Unindent();
             }
+
+            ImGui.InputFloat("Diagonal penalty", ref _diagonalPenalty);
 
             ImGui.Text("Upgrade list");
             {
@@ -214,6 +218,7 @@ internal sealed class App : GameApplication
                             { Bot.ExploreMode.ClosestBase, (_exploreClosestBaseP, _exploreClosestBaseB) }
                         },
                         CostMap = new Dictionary<TileType, float>(_costs),
+                        DiagonalPenalty = _diagonalPenalty,
                         UpgradeList = _upgrades.ToArray(),
                         ReserveOsmium = _reserveOsmium,
                         RoundsMargin = _roundsMargin

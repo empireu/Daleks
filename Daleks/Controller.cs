@@ -8,6 +8,7 @@ public interface IBotConfig
 {
     Dictionary<Bot.ExploreMode, (float Player, float Base)> ExploreCostMultipliers { get; }
     Dictionary<TileType, float> CostMap { get; }
+    float DiagonalPenalty { get; }
     UpgradeType[] UpgradeList { get; }
     int ReserveOsmium { get; }
     int RoundsMargin { get; }
@@ -20,15 +21,27 @@ public sealed class BotConfig : IBotConfig
     public Dictionary<Bot.ExploreMode, (float Player, float Base)> ExploreCostMultipliers { get; set; } = new()
     {
         { Bot.ExploreMode.Closest, (1.0f, 0.0f) },
-        { Bot.ExploreMode.ClosestBase, (1.0f, 2.5f) }
+        { Bot.ExploreMode.ClosestBase, (1.0f, 1.5f) }
     };
 
     public Dictionary<TileType, float> CostMap { get; set; } = new()
     {
-        { TileType.Acid, 10_000 },
-        { TileType.Stone, 2.5f },
-        { TileType.Cobblestone, 2.5f },
+        { TileType.Unknown, 5f },
+        { TileType.Dirt,    10f },
+        { TileType.Stone,   25f },
+        { TileType.Cobble,  25f },
+        { TileType.Iron,    0f },
+        { TileType.Osmium,  0f },
+        { TileType.Base,    10f },
+        { TileType.Acid,    1000f },
+        { TileType.Robot0,  1000f },
+        { TileType.Robot1,  1000f },
+        { TileType.Robot2,  1000f },
+        { TileType.Robot3,  1000f },
+        { TileType.Robot4,  1000f }
     };
+
+    public float DiagonalPenalty { get; set; } = 3f;
 
     public UpgradeType[] UpgradeList { get; set; } = new[]
     {
@@ -41,7 +54,6 @@ public sealed class BotConfig : IBotConfig
     };
 
     public int ReserveOsmium { get; set; } = 1;
-
     public int RoundsMargin { get; set; } = 15;
 }
 
@@ -59,16 +71,26 @@ public readonly struct AttackInfo
     }
 }
 
+public enum LogType
+{
+    Info,
+    Warning,
+    Peril,
+    FTL
+}
+
 public sealed class Log
 {
-    public Log(int depth, string text)
+    public Log(int depth, string text, LogType type)
     {
         Depth = depth;
         Text = text;
+        Type = type;
     }
 
     public int Depth { get; }
     public string Text { get; }
+    public LogType Type { get; }
 }
 
 public sealed class Bot
@@ -78,12 +100,8 @@ public sealed class Bot
     public int AcidRounds { get; }
     public TileMap TileMap { get; }
 
-    // Tiles that were discovered at some point
     private readonly HashSet<Vector2di> _discoveredTiles = new();
     private readonly HashSet<Vector2di> _undiscoveredMiningCandidates = new();
-
-    // Ores that were viewed at some point. They are removed once mined or if their existence conflicts with an up-to-date observation
-    // (this happens if they were mined by some other player or were destroyed by acid)
     private readonly Dictionary<Vector2di, TileType> _pendingOres = new();
     
     // Last used path (for display)
@@ -93,20 +111,51 @@ public sealed class Bot
     private readonly List<Log> _logs = new();
     private int _logLevel = 0;
 
+    /// <summary>
+    ///     Gets the tile positions that were visited so far.
+    /// </summary>
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
+
+    /// <summary>
+    ///     Gets the tile positions that are yet to be visited.
+    /// </summary>
     public IReadOnlySet<Vector2di> UndiscoveredMiningCandidates => _undiscoveredMiningCandidates;
+
+    /// <summary>
+    ///     Gets the tile positions of ores that were observed and have not been mined yet.
+    /// </summary>
     public IReadOnlyDictionary<Vector2di, TileType> PendingOres => _pendingOres;
+
+    /// <summary>
+    ///     Gets the path currently being followed.
+    /// </summary>
     public IReadOnlyList<Vector2di>? Path => _path;
+
+    /// <summary>
+    ///     Gets the list of upgrades in queue.
+    /// </summary>
     public IReadOnlyCollection<UpgradeType> UpgradeQueue => _upgradeQueue;
 
+    /// <summary>
+    ///     Gets the logs that were generated last run.
+    /// </summary>
     public IReadOnlyList<Log> Logs => _logs;
 
+    /// <summary>
+    ///     Gets the next tile to be mined, if one exists.
+    /// </summary>
     public Vector2di? NextMiningTile { get; private set; }
 
+    /// <summary>
+    ///     Gets the current exploration mode.
+    /// </summary>
     public ExploreMode ExplorationMode { get; private set; } = ExploreMode.ClosestBase;
 
     private readonly List<AttackInfo> _attacks = new();
 
+    /// <summary>
+    ///     Gets all attacks that have been initiated so far.
+    /// </summary>
     public IReadOnlyList<AttackInfo> Attacks => _attacks;
 
     public Bot(MatchInfo match, IBotConfig config, int gameRounds)
@@ -125,7 +174,7 @@ public sealed class Bot
 
         Config = config;
         Match = match;
-        TileMap = new TileMap(match.GridSize, config.CostMap);
+        TileMap = new TileMap(match.GridSize, config.CostMap, config.DiagonalPenalty);
 
         // Ignore bedrock edges
         for (var i = 1; i < match.GridSize.X - 1; i++)
@@ -142,9 +191,9 @@ public sealed class Bot
         }
     }
 
-    private void Log(string text)
+    private void Log(string text, LogType type = LogType.Info)
     {
-        _logs.Add(new Log(_logLevel, text));
+        _logs.Add(new Log(_logLevel, text, type));
     }
 
     private void Indent()
@@ -156,14 +205,7 @@ public sealed class Bot
     {
         --_logLevel;
     }
-
-    private void Log(Action body)
-    {
-        Indent();
-        body();
-        Unindent();
-    }
-
+    
     private void ResetExploreTarget()
     {
         _previousExploreTarget = null;
@@ -188,7 +230,6 @@ public sealed class Bot
             _undiscoveredMiningCandidates.Remove(tilePos);
 
             TileMap.Tiles[tilePos] = type;
-            TileMap.SetExplored(tilePos);
 
             if (type is TileType.Iron or TileType.Osmium)
             {
@@ -209,19 +250,16 @@ public sealed class Bot
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float DistanceHeuristic(Vector2di player, Vector2di target)
+    private float ExploreHeuristic(Vector2di player, Vector2di target)
     {
         var (kp, kb) = Config.ExploreCostMultipliers[ExplorationMode];
      
         return kp * Vector2di.Manhattan(player, target) + kb * Vector2di.Manhattan(Match.BasePosition, target);
     }
 
-    // used in GetNextUnexploredTile
-    private readonly PriorityQueue<Vector2di, float> _discoveryQueueCache = new();
-
     private Vector2di? GetNextUnexploredTile(Vector2di playerPos)
     {
-        _discoveryQueueCache.Clear();
+        var queue = new PriorityQueue<Vector2di, float>();
 
         foreach (var tile in _undiscoveredMiningCandidates)
         {
@@ -230,14 +268,14 @@ public sealed class Bot
                 continue;
             }
 
-            _discoveryQueueCache.Enqueue(tile, DistanceHeuristic(playerPos, tile));
+            queue.Enqueue(tile, ExploreHeuristic(playerPos, tile));
         }
 
-        while (_discoveryQueueCache.Count > 0)
+        while (queue.Count > 0)
         {
-            var candidate = _discoveryQueueCache.Dequeue();
+            var candidate = queue.Dequeue();
 
-            if (TileMap.TryFindPath(playerPos, candidate, out _))
+            if (TileMap.CanAccess(playerPos, candidate))
             {
                 return candidate;
             }
@@ -267,7 +305,17 @@ public sealed class Bot
         return _previousExploreTarget;
     }
 
-    private bool TryStepTowards(Vector2di target, CommandState cl, out bool reached, bool useObstacleMining = true, bool useMiningFast = true)
+    /// <summary>
+    ///     Tries to take a step towards <see cref="target"/>.
+    /// </summary>
+    /// <param name="target">A position to step towards. If an unbreakable tile is recorded at that position, this routine will fail.</param>
+    /// <param name="cl"></param>
+    /// <param name="reached">True, if the target position has been reached (the player is at the target location). Otherwise, false.</param>
+    /// <param name="useObstacleMining">If true, mining will be used to clear tiles adjacent to the player. If false, the player will likely get stuck.</param>
+    /// <param name="useMiningFast">If true, mining will be done in an ahead-of-time fashion.</param>
+    /// <returns>True, if the step was performed successfully. Otherwise, false.</returns>
+    /// <exception cref="Exception">Thrown if the player movement state was changed prior to calling this routine.</exception>
+    private bool Step(Vector2di target, CommandState cl, out bool reached, bool useObstacleMining = true, bool useMiningFast = true)
     {
         if (cl.Head.Player.Position != cl.Tail.Player.Position)
         {
@@ -284,15 +332,19 @@ public sealed class Bot
 
         if (!TileMap.TryFindPath(cl.Head.Player.Position, target, out var path))
         {
-            Console.WriteLine("No path");
+            Log($"No path was found to {target}", LogType.Warning);
+
             return false;
         }
 
         _path = path;
 
+        Debug.Assert(path.First() == cl.Head.Player.Position);
+
         var pathQueue = new Queue<Vector2di>(path.Take(cl.Head.Player.Movement + 1));
 
-        Debug.Assert(pathQueue.Dequeue() == cl.Head.Player.Position);
+        Console.WriteLine(path.Count(x => x == cl.Head.Player.Position));
+        pathQueue.Dequeue();
 
         while (pathQueue.Count > 0)
         {
@@ -347,11 +399,12 @@ public sealed class Bot
 
                 var tile = state[p];
 
-                if (tile == TileType.Robot)
+                if (tile.IsRobot())
                 {
                     if (!simulate)
                     {
                         cl.Attack(direction);
+
                         _attacks.Add(new AttackInfo(cl.Tail.Player, cl.Tail.Round, p));
                     }
                   
@@ -391,7 +444,7 @@ public sealed class Bot
             Log("Can attack whilst mining!");
         }
 
-        var success = TryStepTowards(NextMiningTile.Value, cl, out var reached, useObstacleMining: true, useMiningFast: !canAttack);
+        var success = Step(NextMiningTile.Value, cl, out var reached, useObstacleMining: true, useMiningFast: !canAttack);
 
         Log($"Step: {success}");
 
@@ -411,7 +464,7 @@ public sealed class Bot
         {
             foreach (var direction in Enum.GetValues<Direction>())
             {
-                if (cl.IsMined(direction))
+                if (cl.IsMining(direction))
                 {
                     continue;
                 }
@@ -437,7 +490,7 @@ public sealed class Bot
     {
         Log("Buying battery...");
 
-        if (!TryStepTowards(Match.BasePosition, cl, out var reached))
+        if (!Step(Match.BasePosition, cl, out var reached))
         {
             Log("Failed to step!");
             return false;
@@ -445,7 +498,8 @@ public sealed class Bot
 
         if (reached)
         {
-            Debug.Assert(cl.BuyBattery());
+            var bought = cl.BuyBattery();
+            Debug.Assert(bought);
             ResetExploreTarget();
         }
 
@@ -460,40 +514,50 @@ public sealed class Bot
         // Detect box
         if (cl.Tail.DiscoveredTiles.Contains(retreatTarget))
         {
-            if (TileMap.Tiles[retreatTarget] == TileType.Robot)
+            if (TileMap.Tiles[retreatTarget].IsRobot())
             {
                 var box = true;
 
+                /*
+                 * A player is camping at the center of the map. If they are boxed in, it means they are employing a strategy to block players from
+                 * reaching the center. An example is the strabun bot.
+                 * It is likely that tiles will be re-placed as soon as we break them. As such, we will redirect to a corner of the box.
+                 * The enemy will not be able to place there and we will be safe from acid.
+                 * This will result in a stalemate.
+                 */
+
                 foreach (var direction in Enum.GetValues<Direction>())
                 {
-                    if (TileMap.Tiles[retreatTarget].IsWalkable())
+                    if (TileMap.Tiles[retreatTarget + direction].IsWalkable())
                     {
                         box = false;
                         break;
                     }
                 }
 
-                var player = cl.Tail.Player;
 
                 if (box)
                 {
-                    Log("ENEMY BOX DETECTED!");
+                    Log("ENEMY BOX DETECTED!", LogType.Peril);
+
+                    var player = cl.Tail.Player;
 
                     var candidates = new[]
                     {
-                        retreatTarget + new Vector2di(-1, 1), // Top left
-                        retreatTarget + new Vector2di(1, 1), // Top right
-                        retreatTarget + new Vector2di(-1, -1), // Bottom left
-                        retreatTarget + new Vector2di(1, -1) // Bottom right
-                    }.OrderBy(c => Vector2di.DistanceSqr(c, player.Position));
+                        retreatTarget + new Vector2di(-1, 1),
+                        retreatTarget + new Vector2di(1, 1),
+                        retreatTarget + new Vector2di(-1, -1),
+                        retreatTarget + new Vector2di(1, -1)
+                    }.Where(c => TileMap.CanAccess(player.Position, c))
+                        .OrderBy(c => Vector2di.DistanceSqr(c, player.Position));
 
                     var found = false;
 
                     foreach (var candidate in candidates)
                     {
-                        if (!TileMap.Tiles[candidate].IsUnbreakable())
+                        if (!TileMap.Tiles[candidate].IsUnbreakable()) // may be elided once we figure out the details of CanAccess
                         {
-                            Log("Found candidate for anti-box retreat!");
+                            Log("Found candidate for anti-box retreat!", LogType.Warning);
                             retreatTarget = candidate;
                             found = true;
                             break;
@@ -502,17 +566,17 @@ public sealed class Bot
 
                     if (!found)
                     {
-                        Log("NO CANDIDATES FOR ESCAPE!");
+                        Log("NO CANDIDATES FOR ESCAPE!", LogType.Peril);
                     }
                 }
             }
         }
 
-        if(!TryStepTowards(retreatTarget, cl, out var reached))
+        if(!Step(retreatTarget, cl, out var reached))
         {
             var attacked = Attack(cl);
             
-            Log($"Failed to step to center! Attack: {attacked}");
+            Log($"Failed to step to center! Attack: {attacked}", LogType.Peril);
 
             if (!attacked)
             {
@@ -520,7 +584,7 @@ public sealed class Bot
                 
                 cl.Move(dir);
 
-                Log($"Fallback movement to {dir}");
+                Log($"Fallback movement to {dir}", LogType.Peril);
                 Indent();
                 if (!cl.HasAction)
                 {
@@ -545,7 +609,7 @@ public sealed class Bot
 
         // build box
 
-        Log("Building box!");
+        Log("Building box!", LogType.Warning);
 
         var playerPos = cl.Head.Player.Position;
 
@@ -558,45 +622,55 @@ public sealed class Bot
                 return;
             }
         }
+
+        Log($"Safe for ~{cl.Tail.Player.CobbleCount} rounds");
     }
 
-    public void Update(CommandState cl)
+    private void PrepareUpdate()
     {
         _path = null;
         _logs.Clear();
         _logLevel = 0;
+    }
 
+    public void Update(CommandState cl)
+    {
+        PrepareUpdate();
         UpdateTiles(cl);
 
         var player = cl.Head.Player;
-        var retreatMode = AcidRounds - cl.Head.Round <= Config.RoundsMargin;
+        var isRetreat = AcidRounds - cl.Head.Round <= Config.RoundsMargin;
        
         if (player.HasBattery)
         {
             while (cl is { CanBuy: true, CouldHeal: true })
             {
-                Log($"Heal@{cl.Tail.Player.Hp}");
-                Debug.Assert(cl.Heal());
+                var healed = cl.Heal();
+                Log($"Healing@{cl.Tail.Player.Hp} {healed}");
+                Debug.Assert(healed);
             }
 
             while (_upgradeQueue.Count > 0)
             {
                 var upgrade = _upgradeQueue.Peek();
+                Debug.Assert(upgrade != UpgradeType.Battery);
 
-                bool CanSpendOsmium() => !retreatMode && cl.Tail.Player.OsmiumCount > Config.ReserveOsmium;
+                Log($"Next upgrade: {upgrade}");
+
+                bool CanSpendOsmium() => !isRetreat && cl.Tail.Player.OsmiumCount > Config.ReserveOsmium;
 
                 if (upgrade is UpgradeType.Antenna)
                 {
-                    if (cl.Tail.Player.HasAntenna || retreatMode)
+                    if (cl.Tail.Player.HasAntenna || isRetreat)
                     {
-                        Debug.Assert(_upgradeQueue.Dequeue() == UpgradeType.Antenna);
+                        _upgradeQueue.Dequeue();
                         continue;
                     }
 
                     if (cl.CouldBuyAntenna && CanSpendOsmium())
                     {
-                        Debug.Assert(cl.BuyAntenna());
-                        Debug.Assert(_upgradeQueue.Dequeue() == UpgradeType.Antenna);
+                        cl.BuyAntenna();
+                        _upgradeQueue.Dequeue();
                         Log("Bought antenna");
                         continue;
                     }
@@ -604,15 +678,13 @@ public sealed class Bot
                     break;
                 }
 
-                Debug.Assert(upgrade != UpgradeType.Battery);
-
                 var actualLevel = cl.Tail.Player.GetUpgradeLevel(upgrade);
 
                 Debug.Assert(actualLevel is >= 1 and <= 3);
 
                 if (actualLevel == 3)
                 {
-                    Debug.Assert(_upgradeQueue.Dequeue() == upgrade);
+                    _upgradeQueue.Dequeue();
                     continue;
                 }
 
@@ -625,12 +697,14 @@ public sealed class Bot
                     _ => throw new ArgumentOutOfRangeException(null, $"Unexpected upgrade {upgrade}")
                 };
 
-                // Upgrade if osmium is not required or threshold is satisfied
+                // Upgrade if osmium is not required (level 1 -> 2) or osmium threshold is satisfied
+                // Also, spending osmium is not allowed when retreating (more valuable for healing)
                 if (actualLevel == 1 || CanSpendOsmium()) 
                 {
                     if (cl.UpgradeAbility(ability))
                     {
-                        Debug.Assert(_upgradeQueue.Dequeue() == upgrade);
+                        _upgradeQueue.Dequeue();
+
                         Log($"Upgraded {ability}");
                     }
                     else
@@ -645,9 +719,9 @@ public sealed class Bot
             }
         }
 
-        if (retreatMode)
+        if (isRetreat)
         {
-            Log("Retreating...");
+            Log("Retreating...", LogType.Warning);
             Indent();
             UpdateRetreat(cl);
             Unindent();
@@ -673,7 +747,7 @@ public sealed class Bot
             Indent();
             if (!UpdateMining(cl))
             {
-                Log("Failed to mine!");
+                Log("Failed to mine!", LogType.FTL);
                 Indent();
                 UpdateRetreat(cl);
                 Unindent();

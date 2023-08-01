@@ -36,7 +36,7 @@ public class GameManager
                 _match ??= new MatchInfo
                 {
                     BasePosition = state.Player.Position,
-                    GridSize = state.GridSize
+                    GridSize = state.Size
                 };
             });
         }
@@ -55,7 +55,7 @@ public class GameManager
                 _match ??= new MatchInfo
                 {
                     BasePosition = state.Player.Position,
-                    GridSize = state.GridSize
+                    GridSize = state.Size
                 };
             });
         }
