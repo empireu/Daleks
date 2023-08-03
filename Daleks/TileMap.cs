@@ -45,6 +45,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
     private readonly FrameData _data = new();
 
+    public Grid<float> CostOverride { get; }
+
     public TileMap(Vector2di size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
     {
         _diagonalPenalty = diagonalPenalty;
@@ -77,6 +79,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         Tiles = new Grid<TileType>(size);
 
         Array.Fill(Tiles.Storage, TileType.Unknown);
+
+        CostOverride = new Grid<float>(Size);
     }
 
     public void BeginFrame()
@@ -332,7 +336,12 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                     continue;
                 }
 
-                var newCost = currentCell.Cost + DiagonalCost(neighborPoint, grid) + _costMap[(int)type] + 1f;
+                var newCost = 
+                    currentCell.Cost + 
+                    DiagonalCost(neighborPoint, grid) + 
+                    _costMap[(int)type] + 
+                    CostOverride[neighborPoint] +
+                    1f;
 
                 if (newCost < neighborCell.Cost)
                 {

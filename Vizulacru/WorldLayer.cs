@@ -138,8 +138,6 @@ internal sealed class WorldLayer : Layer, IDisposable
     private readonly QuadBatch _dynamicBatch;
     private readonly QuadBatch _unexploredTreeBatch;
 
-    private bool _renderUnexploredRegion = true;
-
     private readonly PostProcessor _postProcess;
     private bool _dragCamera;
 
@@ -235,13 +233,6 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         bool Begin(string title) => ImGuiExt.Begin(title, id);
 
-        if (Begin("Display"))
-        {
-            ImGui.Checkbox("Show unexplored target", ref _renderUnexploredRegion);
-        }
-
-        ImGui.End();
-
         var mouse = MouseGrid;
 
         if (_controller != null && _lastGameState != null)
@@ -332,6 +323,24 @@ internal sealed class WorldLayer : Layer, IDisposable
                     foreach (var attack in _controller.Attacks)
                     {
                         ImGui.Text($"R: {attack.Round}, T: {attack.TargetPos}");
+                        ImGui.Separator();
+                    }
+                }
+                else
+                {
+                    ImGui.Text("N/A");
+                }
+            }
+
+            ImGui.End();
+
+            if (Begin("Damage Log"))
+            {
+                if (_controller.DamageTaken.Count > 0)
+                {
+                    foreach (var loss in _controller.DamageTaken)
+                    {
+                        ImGui.Text($"-{loss.Delta} HP @ {loss.Round}");
                         ImGui.Separator();
                     }
                 }
@@ -602,6 +611,31 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
+    private void RenderSpottedPlayers()
+    {
+        if (_controller == null)
+        {
+            return;
+        }
+
+        _dynamicBatch.Effects = _dynamicBatch.Effects with { Tint = new RgbaFloat(1, 1, 1, 0.5f) };
+
+        foreach (var tile in _controller.SpottedPlayers.Keys)
+        {
+            var type = _controller.SpottedPlayers[tile].Id;
+
+            _dynamicBatch.TexturedQuad(GridPos(tile), TileScale, type switch
+            {
+                TileType.Robot0 => _textures.Enemy0Tile,
+                TileType.Robot1 => _textures.Enemy1Tile,
+                TileType.Robot2 => _textures.Enemy2Tile,
+                TileType.Robot3 => _textures.Enemy3Tile,
+                TileType.Robot4 => _textures.Enemy4Tile,
+                _ => throw new ArgumentOutOfRangeException()
+            });
+        }
+    }
+
     private void RenderMiningTarget()
     {
         if (_lastGameState == null || _controller is not { NextMiningTile: not null })
@@ -626,12 +660,11 @@ internal sealed class WorldLayer : Layer, IDisposable
 
     protected override void Render(FrameInfo frameInfo)
     {
-        _dynamicBatch.Effects = QuadBatchEffects.Transformed(_cameraController.Camera.CameraMatrix);
-        
         _postProcess.ClearColor();
 
         void RenderPass(Action body)
         {
+            _dynamicBatch.Effects = QuadBatchEffects.Transformed(_cameraController.Camera.CameraMatrix);
             _dynamicBatch.Clear();
             body();
             _dynamicBatch.Submit(framebuffer: _postProcess.InputFramebuffer);
@@ -640,6 +673,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         RenderPass(RenderTerrain);
         RenderPass(RenderAttackHistory);
         RenderPass(RenderView);
+        RenderPass(RenderSpottedPlayers);
         RenderPass(RenderMiningTarget);
         RenderPass(RenderPath);
 

@@ -12,6 +12,7 @@ public interface IBotConfig
     UpgradeType[] UpgradeList { get; }
     int ReserveOsmium { get; }
     int RoundsMargin { get; }
+    float PlayerOverrideCost { get; }
 }
 
 public sealed class BotConfig : IBotConfig
@@ -55,6 +56,7 @@ public sealed class BotConfig : IBotConfig
         UpgradeType.Attack
     };
 
+    public float PlayerOverrideCost { get; set; } = 100;
     public int ReserveOsmium { get; set; } = 1;
     public int RoundsMargin { get; set; } = 15;
 }
@@ -70,6 +72,30 @@ public readonly struct AttackInfo
         Player = player;
         Round = round;
         TargetPos = targetPos;
+    }
+}
+
+public readonly struct SpottedPlayerInfo
+{
+    public int Round { get; }
+    public TileType Id { get; }
+
+    public SpottedPlayerInfo(int round, TileType id)
+    {
+        Round = round;
+        Id = id;
+    }
+}
+
+public readonly struct TakenDamageInfo
+{
+    public int Delta { get; }
+    public int Round { get; }
+
+    public TakenDamageInfo(int delta, int round)
+    {
+        Delta = delta;
+        Round = round;
     }
 }
 
@@ -159,6 +185,16 @@ public sealed class Bot
     ///     Gets all attacks that have been initiated so far.
     /// </summary>
     public IReadOnlyList<AttackInfo> Attacks => _attacks;
+
+    private readonly Dictionary<Vector2di, SpottedPlayerInfo> _spottedPlayers = new();
+
+    private int? _lastHp;
+
+    private readonly List<TakenDamageInfo> _damageTaken = new();
+
+    public IReadOnlyList<TakenDamageInfo> DamageTaken => _damageTaken;
+
+    public IReadOnlyDictionary<Vector2di, SpottedPlayerInfo> SpottedPlayers => _spottedPlayers;
 
     public Bot(MatchInfo match, IBotConfig config, int gameRounds)
     {
@@ -534,7 +570,12 @@ public sealed class Bot
     {
         var retreatTarget = Match.GridSize / 2;
         var canAttack = Attack(cl, simulate: true);
-        var isAcid = cl.DiscoveredTilesMulti.ContainsKey(TileType.Acid);
+        var isAcidDetected = cl.DiscoveredTilesMulti.ContainsKey(TileType.Acid);
+        var isAcidCritical = Enum.GetValues<Direction>().Count(dir =>
+        {
+            var pos = cl.Head.Player.Position + dir;
+            return Tiles.IsWithinBounds(pos) && Tiles[pos] == TileType.Acid;
+        }) >= 2;
 
         // Detect box
         if (cl.Tail.DiscoveredTiles.Contains(retreatTarget))
@@ -638,7 +679,12 @@ public sealed class Bot
             }
         }
 
-        if (canAttack && !isAcid)
+        if (isAcidCritical)
+        {
+            Log("Acid is CRITICAL!", LogType.Peril);
+        }
+
+        if (canAttack && !isAcidCritical)
         {
             // Attack when not in peril
 
@@ -648,12 +694,12 @@ public sealed class Bot
             return;
         }
 
-        if (canAttack && isAcid)
+        if (canAttack && isAcidCritical)
         {
             Log("Prioritizing survival above attacking target", LogType.Warning);
         }
 
-        if (!Step(retreatTarget, cl, out var reached, useObstacleMining: !canAttack || isAcid, useMiningFast: !canAttack))
+        if (!Step(retreatTarget, cl, out var reached, useObstacleMining: !canAttack || isAcidDetected, useMiningFast: !canAttack))
         {
             var attacked = Attack(cl);
             
@@ -700,7 +746,66 @@ public sealed class Bot
         _tileMap.BeginFrame();
     }
 
-    private void Run(CommandState cl)
+    private void UpdateSpottedPlayers(CommandState cl)
+    {
+        foreach (var tile in cl.DiscoveredTiles)
+        {
+            _spottedPlayers.Remove(tile);
+            var type = Tiles[tile];
+
+            if (type.IsRobot())
+            {
+                _spottedPlayers.Add(tile, new SpottedPlayerInfo(cl.Head.Round, type));
+            }
+        }
+
+        var players = SpottedPlayers.Keys.ToArray();
+
+        foreach (var tile in players)
+        {
+            if (cl.Head.Round - _spottedPlayers[tile].Round > 5)
+            {
+                _spottedPlayers.Remove(tile);
+            }
+        }
+    }
+
+    private void UpdateCostOverrides()
+    {
+        Array.Fill(_tileMap.CostOverride.Storage, 0);
+
+        var offsets = Player.SightOffsets[3];
+
+        if (_spottedPlayers.Count == 0)
+        {
+            return;
+        }
+
+        Log("Spotted players:");
+
+        Indent();
+
+        foreach (var tile in _spottedPlayers.Keys)
+        {
+            var round = _spottedPlayers[tile].Round;
+
+            Log($"{tile} - round {round}");
+
+            foreach (var offset in offsets)
+            {
+                var pos = tile + offset;
+
+                if (_tileMap.IsWithinBounds(pos))
+                {
+                    _tileMap.CostOverride[pos] = Config.PlayerOverrideCost;
+                }
+            }
+        }
+
+        Unindent();
+    }
+
+    private void RunBotLogic(CommandState cl)
     {
         var player = cl.Head.Player;
         var isRetreat = AcidRounds - cl.Head.Round <= Config.RoundsMargin;
@@ -820,11 +925,32 @@ public sealed class Bot
         }
     }
 
+    private void UpdateIncomingDamage(CommandState cl)
+    {
+        var actualHp = cl.Head.Player.Hp;
+
+        if (!_lastHp.HasValue)
+        {
+            _lastHp = actualHp;
+            return;
+        }
+
+        if (actualHp < _lastHp.Value)
+        {
+            _damageTaken.Add(new TakenDamageInfo(_lastHp.Value - actualHp, cl.Head.Round));
+        }
+
+        _lastHp = actualHp;
+    }
+
     public void Update(CommandState cl)
     {
         PrepareUpdate();
         UpdateTiles(cl);
-        Run(cl);
+        UpdateSpottedPlayers(cl);
+        UpdateCostOverrides();
+        UpdateIncomingDamage(cl);
+        RunBotLogic(cl);
         EndUpdate();
     }
 

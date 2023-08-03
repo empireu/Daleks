@@ -91,6 +91,7 @@ internal sealed class App : GameApplication
     private Dictionary<TileType, float> _costs = new();
     private float _diagonalPenalty;
     private List<UpgradeType> _upgrades = new(0);
+    private float _playerOverrideCost;
     private int _reserveOsmium;
     private int _roundsMargin;
 
@@ -103,6 +104,7 @@ internal sealed class App : GameApplication
         _costs = new Dictionary<TileType, float>(cfg.CostMap);
         _diagonalPenalty = cfg.DiagonalPenalty;
         _upgrades = cfg.UpgradeList.ToList();
+        _playerOverrideCost = cfg.PlayerOverrideCost;
         _reserveOsmium = cfg.ReserveOsmium;
         _roundsMargin = cfg.RoundsMargin;
     }
@@ -203,6 +205,7 @@ internal sealed class App : GameApplication
                 ImGui.Unindent();
             }
 
+            ImGui.InputFloat("Player override cost", ref _playerOverrideCost);
             ImGui.InputInt("Reserve osmium", ref _reserveOsmium);
             ImGui.InputInt("Rounds margin", ref _roundsMargin);
 
@@ -220,6 +223,7 @@ internal sealed class App : GameApplication
                         CostMap = new Dictionary<TileType, float>(_costs),
                         DiagonalPenalty = _diagonalPenalty,
                         UpgradeList = _upgrades.ToArray(),
+                        PlayerOverrideCost = _playerOverrideCost,
                         ReserveOsmium = _reserveOsmium,
                         RoundsMargin = _roundsMargin
                     });
