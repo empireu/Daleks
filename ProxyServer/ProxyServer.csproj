@@ -8,19 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ImGui.NET" Version="1.89.5" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="7.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0-preview.6.23329.7" />
-    <PackageReference Include="Serilog.Extensions.Hosting" Version="7.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="4.2.0-dev-00918" />
     <PackageReference Include="Serilog.Sinks.File" Version="5.0.1-dev-00947" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Common\Common.csproj" />
-    <ProjectReference Include="..\external\GraphicsFramework\GameFramework.ImGui\GameFramework.ImGui.csproj" />
-    <ProjectReference Include="..\external\GraphicsFramework\GameFramework.Utilities\GameFramework.Utilities.csproj" />
-    <ProjectReference Include="..\external\GraphicsFramework\GameFramework\GameFramework.csproj" />
+    <ProjectReference Include="..\ProxyNetworking\ProxyNetworking.csproj" />
   </ItemGroup>
 
 </Project>

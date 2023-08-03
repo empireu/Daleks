@@ -596,6 +596,48 @@ public sealed class Bot
             }
         }
 
+        // Detect blocked off center
+        if (_tileMap.Tiles[retreatTarget].IsUnbreakable())
+        {
+            Log("Map center is unbreakable!", LogType.Warning);
+
+            // Edge case that happens with a high probability on small maps.
+            // We'll just search for the closest non-unbreakable tile.
+
+            var queue = new Queue<Vector2di>();
+            queue.Enqueue(retreatTarget);
+            var traversed = new HashSet<Vector2di>();
+
+            while (queue.Count > 0)
+            {
+                var front = queue.Dequeue();
+
+                if (!traversed.Add(front))
+                {
+                    continue;
+                }
+
+                if (!_tileMap.Tiles[front].IsUnbreakable())
+                {
+                    retreatTarget = front;
+                    Indent();
+                    Log($"Falling back to {retreatTarget}");
+                    Unindent();
+                    break;
+                }
+
+                for (var i = 0; i < 4; i++)
+                {
+                    var neighbor = front + (Direction)i;
+
+                    if (_tileMap.IsWithinBounds(neighbor))
+                    {
+                        queue.Enqueue(neighbor);
+                    }
+                }
+            }
+        }
+
         if (canAttack && !isAcid)
         {
             // Attack when not in peril
