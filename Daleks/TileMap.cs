@@ -1,6 +1,5 @@
 ﻿using System.Diagnostics;
 using Common;
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Vector2di = Common.Vector2di;
 
@@ -9,8 +8,42 @@ namespace Daleks;
 public sealed class TileMap : IReadOnlyGrid<TileType>
 {
     private readonly float _diagonalPenalty;
-    private readonly Grid<PathfindingCell> _pathfindingGrid;
     private readonly float[] _costMap;
+
+    private bool _begun;
+
+    private sealed class FrameData
+    {
+        /// <summary>
+        ///     Stores data obtained after running Dijkstra
+        /// </summary>
+        public sealed class PathfindingInfo
+        {
+            public Vector2di Start { get; }
+            public Grid<PathfindingCell> Grid { get; }
+
+            // End point -> path
+            // If null, the path is blocked off
+            public readonly Dictionary<Vector2di, List<Vector2di>?> TracedPaths = new();
+
+            public PathfindingInfo(Vector2di start, Grid<PathfindingCell> grid)
+            {
+                Start = start;
+                Grid = grid;
+            }
+        }
+
+        // Start point -> Dijkstra grid
+        public readonly Dictionary<Vector2di, PathfindingInfo> Paths = new();
+        public readonly Dictionary<(Vector2di, Vector2di), bool> CanAccess = new();
+
+        public void Clear()
+        {
+            Paths.Clear();
+        }
+    }
+
+    private readonly FrameData _data = new();
 
     public TileMap(Vector2di size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
     {
@@ -44,33 +77,80 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         Tiles = new Grid<TileType>(size);
 
         Array.Fill(Tiles.Storage, TileType.Unknown);
-
-        _pathfindingGrid = new Grid<PathfindingCell>(size);
-
-        ClearPathfindingData();
     }
-    
+
+    public void BeginFrame()
+    {
+        if (_begun)
+        {
+            throw new InvalidOperationException("Cannot begin frame before ending previous frame");
+        }
+
+        _begun = true;
+
+        _data.Clear();
+    }
+
+    public void EndFrame()
+    {
+        if (!_begun)
+        {
+            throw new InvalidOperationException("Cannot end frame before beginning");
+        }
+
+        _begun = false;
+    }
+
+    private void Validate()
+    {
+        if (!_begun)
+        {
+            throw new InvalidOperationException("Never begun frame");
+        }
+    }
+
     public Vector2di Size { get; }
 
     public Grid<TileType> Tiles { get; }
     
-    private void ClearPathfindingData()
+    private Grid<PathfindingCell> CreateGrid(Vector2di startPoint)
     {
-        Array.Fill(_pathfindingGrid.Storage, new PathfindingCell
+        var grid = new Grid<PathfindingCell>(Size);
+
+        Array.Fill(grid.Storage, new PathfindingCell
         {
             Ancestor = null,
             Cost = float.MaxValue,
             IsVisited = false,
         });
-    }
 
-    private CachedPath? _cachedPath;
+        grid[startPoint].Cost = 0;
+
+        return grid;
+    }
 
     public bool CanAccess(Vector2di startPoint, Vector2di goalPoint)
     {
+        Validate();
+
         if (Tiles[startPoint].IsUnbreakable() || Tiles[goalPoint].IsUnbreakable())
         {
             return false;
+        }
+
+        var pair = (startPoint, goalPoint).Map(p => p.goalPoint.NormSqr < p.startPoint.NormSqr ? (p.goalPoint, p.startPoint) : p);
+
+        if (_data.CanAccess.TryGetValue(pair, out var result))
+        {
+            return result;
+        }
+
+        if (_data.Paths.TryGetValue(startPoint, out var info))
+        {
+            if (info.TracedPaths.TryGetValue(goalPoint, out var p))
+            {
+                return p != null;
+            }
         }
 
         var queue = new PriorityQueue<Vector2di, float>();
@@ -87,6 +167,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
             if (front == goalPoint)
             {
+                _data.CanAccess.Add(pair, true);
                 return true;
             }
 
@@ -106,79 +187,98 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             }
         }
 
+        _data.CanAccess.Add(pair, false);
+
         return false;
     }
 
-    public bool TryFindPath(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
+    private List<Vector2di>? Trace(FrameData.PathfindingInfo info, Vector2di goal)
     {
-        CanAccess(startPoint, goalPoint);
+        var result = new List<Vector2di>();
 
-        void EvictCache()
+        while (true)
         {
-            _cachedPath = null;
-        }
+            Debug.Assert(!Tiles[goal].IsUnbreakable());
 
-        if (_cachedPath != null && _cachedPath.Goal == goalPoint)
-        {
-            var queue = new Queue<Vector2di>(_cachedPath.Path);
-            var cache = _cachedPath.Path;
+            result.Add(goal);
 
-            // ReSharper disable once ForCanBeConvertedToForeach
-            for (var i = 0; i < cache.Count; i++)
+            var ancestor = info.Grid[goal].Ancestor;
+
+            if (ancestor == null || Tiles[ancestor.Value].IsUnbreakable())
             {
-                if (Tiles[cache[i]].IsUnbreakable())
-                {
-                    goto pass;
-                }
+                return null;
             }
 
-            while (queue.Count > 0)
+            goal = ancestor.Value;
+
+            if (goal == info.Start)
             {
-                var currentPoint = queue.Dequeue();
-
-                if (currentPoint == startPoint)
-                {
-                    path = new List<Vector2di>(queue.Count + 1) { startPoint };
-
-                    path.AddRange(queue);
-
-                    if (path.Count == 1)
-                    {
-                        path.Add(goalPoint);
-                    }
-
-                    return true;
-                }
+                result.Add(info.Start);
+                break;
             }
-
-            pass:
-            EvictCache();
         }
 
-        var successful = FindPathCore(startPoint, goalPoint, out path);
+        result.Reverse();
+
+        return result;
+    }
+
+    private List<Vector2di>? FromExistingGrid(Vector2di goalPoint, FrameData.PathfindingInfo info)
+    {
+        if (info.TracedPaths.TryGetValue(goalPoint, out var path))
+        {
+            return path;
+        }
+
+        path = Trace(info, goalPoint);
+
+        info.TracedPaths.Add(goalPoint, path);
+
+        return path;
+    }
+
+    public IReadOnlyList<Vector2di>? FindPath(Vector2di startPoint, Vector2di goalPoint)
+    {
+        Validate();
+
+        if (startPoint == goalPoint)
+        {
+            return new List<Vector2di> { startPoint, goalPoint };
+        }
         
-        ClearPathfindingData();
-
-        if (successful)
+        if (!Tiles.IsWithinBounds(startPoint) || Tiles[startPoint].IsUnbreakable())
         {
-            _cachedPath = new CachedPath(goalPoint, path!)
-            {
-                VehiclePos = startPoint
-            };
+            return null;
         }
 
-        return successful;
+        if (!Tiles.IsWithinBounds(goalPoint) || Tiles[goalPoint].IsUnbreakable())
+        {
+            return null;
+        }
+
+        if (_data.Paths.TryGetValue(startPoint, out var existingData))
+        {
+            return FromExistingGrid(goalPoint, existingData);
+        }
+
+        var grid = RunPathfinding(startPoint);
+
+        existingData = new FrameData.PathfindingInfo(startPoint, grid);
+
+        _data.Paths.Add(startPoint, existingData);
+
+        return FromExistingGrid(goalPoint, existingData);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float DiagonalCost(Vector2di cPos)
+    private float DiagonalCost(Vector2di cPos, Grid<PathfindingCell> grid)
     {
-        var c = _pathfindingGrid[cPos];
+        var c = grid[cPos];
         if (!c.Ancestor.HasValue) return 0f;
 
         var bPos = c.Ancestor.Value;
 
-        var b = _pathfindingGrid[bPos];
+        var b = grid[bPos];
         if (!b.Ancestor.HasValue) return 0f;
 
         var aPos = b.Ancestor.Value;
@@ -193,56 +293,21 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         return 0f;
     }
 
-    private bool FindPathCore(Vector2di startPoint, Vector2di goalPoint, [NotNullWhen(true)] out List<Vector2di>? path)
+    private Grid<PathfindingCell> RunPathfinding(Vector2di startPoint)
     {
-        if (!Tiles.IsWithinBounds(startPoint) || !Tiles.IsWithinBounds(goalPoint))
-        {
-            path = null;
-            return false;
-        }
-
-        if (startPoint == goalPoint)
-        {
-            path = new List<Vector2di> { startPoint, goalPoint };
-            return true;
-        }
-
         var queue = new PrioritySet<Vector2di, float>();
         
         queue.Enqueue(startPoint, 0);
-     
-        _pathfindingGrid[startPoint].Cost = 0;
+
+        var grid = CreateGrid(startPoint);
 
         while (queue.Count > 0)
         {
             var currentPoint = queue.Dequeue();
 
-            if (currentPoint == goalPoint)
-            {
-                path = new List<Vector2di>();
+            var currentCell = grid[currentPoint];
 
-                while (true)
-                {
-                    path.Add(goalPoint);
-
-                    goalPoint = _pathfindingGrid[goalPoint].Ancestor ?? throw new Exception("Expected ancestor");
-
-                    if (goalPoint == startPoint)
-                    {
-                        path.Add(startPoint);
-
-                        break;
-                    }
-                }
-
-                path.Reverse();
-
-                return true;
-            }
-
-            var currentCell = _pathfindingGrid[currentPoint];
-
-            _pathfindingGrid[currentPoint].IsVisited = true;
+            grid[currentPoint].IsVisited = true;
 
             for (var i = 0; i < 4; i++)
             {
@@ -253,7 +318,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                     continue;
                 }
 
-                ref var neighborCell = ref _pathfindingGrid[neighborPoint];
+                ref var neighborCell = ref grid[neighborPoint];
 
                 if (neighborCell.IsVisited)
                 {
@@ -267,7 +332,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                     continue;
                 }
 
-                var newCost = currentCell.Cost + DiagonalCost(neighborPoint) + _costMap[(int)type] + 1f;
+                var newCost = currentCell.Cost + DiagonalCost(neighborPoint, grid) + _costMap[(int)type] + 1f;
 
                 if (newCost < neighborCell.Cost)
                 {
@@ -279,9 +344,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             }
         }
 
-        path = null;
-
-        return false;
+        return grid;
     }
 
     public TileType this[int x, int y] => Tiles[x, y];
@@ -292,27 +355,12 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsWithinBounds(Vector2di v) => Tiles.IsWithinBounds(v);
 
-    public struct PathfindingCell : IComparable<PathfindingCell>
+    private struct PathfindingCell : IComparable<PathfindingCell>
     {
         public Vector2di? Ancestor;
         public float Cost;
         public bool IsVisited;
 
         public readonly int CompareTo(PathfindingCell other) => Cost.CompareTo(other.Cost);
-    }
-
-    private sealed class CachedPath
-    {
-        public Vector2di Goal { get; }
-
-        public List<Vector2di> Path { get; }
-
-        public CachedPath(Vector2di goal, List<Vector2di> path)
-        {
-            Goal = goal;
-            Path = path;
-        }
-
-        public Vector2di VehiclePos { get; set; }
     }
 }

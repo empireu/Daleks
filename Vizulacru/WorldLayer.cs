@@ -159,8 +159,8 @@ internal sealed class WorldLayer : Layer, IDisposable
             return _cameraController.Camera
                 .MouseToWorld2D(_app.Input.MousePosition, _app.Window.Width, _app.Window.Height).Map(mouseWorld =>
                     new Vector2di(
-                        Math.Clamp((int)Math.Round(mouseWorld.X), 0, _controller.TileMap.Size.X - 1),
-                        Math.Clamp(-(int)Math.Round(mouseWorld.Y), 0, _controller.TileMap.Size.Y - 1)
+                        Math.Clamp((int)Math.Round(mouseWorld.X), 0, _controller.Tiles.Size.X - 1),
+                        Math.Clamp(-(int)Math.Round(mouseWorld.Y), 0, _controller.Tiles.Size.Y - 1)
                     )
                 );
         }
@@ -248,7 +248,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         {
             if (Begin("Game"))
             {
-                var world = _controller.TileMap;
+                var world = _controller.Tiles;
 
                 ImGui.Text($"Round: {_lastGameState.Round}/{_controller.AcidRounds}");
 
@@ -265,7 +265,7 @@ internal sealed class WorldLayer : Layer, IDisposable
 
                 foreach (var position in _controller.PendingOres.Keys)
                 {
-                    ores[_controller.TileMap.Tiles[position]]++;
+                    ores[_controller.Tiles[position]]++;
                 }
 
                 ImGui.Indent();
@@ -486,7 +486,7 @@ internal sealed class WorldLayer : Layer, IDisposable
             return;
         }
 
-        var world = _controller.TileMap;
+        var world = _controller.Tiles;
         var playerPos = Assert.NotNull(_lastGameState).Player.Position;
 
         var unknownColor = new RgbaFloat4(18 / 255f, 18 / 255f, 18 / 255f, 1f);
@@ -602,11 +602,25 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
-    private void RenderUnexploredTarget()
+    private void RenderMiningTarget()
     {
-        if (_controller is { NextMiningTile: not null })
+        if (_lastGameState == null || _controller is not { NextMiningTile: not null })
         {
-            _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.3f));
+            return;
+        }
+
+        _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.3f));
+
+        var player = _lastGameState.Player;
+
+        var offsets = Player.SightOffsets[player.Sight];
+        var contours = Player.SightContours[player.Sight].ToHashSet();
+
+        foreach (var offset in offsets)
+        {
+            var scale = contours.Contains(offset) ? TileScale * 1f : TileScale * 0.8f;
+
+            _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value + offset), scale, new RgbaFloat4(1f, 0.1f, 0.1f, 0.4f));
         }
     }
 
@@ -626,7 +640,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         RenderPass(RenderTerrain);
         RenderPass(RenderAttackHistory);
         RenderPass(RenderView);
-        RenderPass(RenderUnexploredTarget);
+        RenderPass(RenderMiningTarget);
         RenderPass(RenderPath);
 
         RenderPass(RenderHighlight);

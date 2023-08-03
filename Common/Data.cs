@@ -42,6 +42,8 @@ public sealed class Grid<T> : IReadOnlyGrid<T>
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsWithinBounds(Vector2di v) => IsWithinBounds(v.X, v.Y);
+
+    public Grid<T> Bind() => new(Storage.ToArray(), Size);
 }
 
 public interface IReadOnlyHashMultiMap<in TKey, TValue>

@@ -4,6 +4,76 @@ namespace Common;
 
 public readonly struct Player
 {
+    public static readonly IReadOnlyDictionary<int, int> SightDiameters = new Dictionary<int, int>()
+    {
+        { 1, 5 },
+        { 2, 7 },
+        { 3, 9 }
+    };
+
+    public static readonly IReadOnlyDictionary<int, Vector2di[]> SightOffsets = SightDiameters.ToDictionary(kvp => kvp.Key, kvp =>
+    {
+        var radius = SightDiameters[kvp.Key] / 2;
+        var results = new List<Vector2di>();
+
+        var magic = kvp.Key switch
+        {
+            1 => Math.Sqrt(5.0) + 0.1,
+            2 => Math.Sqrt(12.0) + 0.1,
+            3 => Math.Sqrt(20.0) + 0.1,
+            _ => throw new ArgumentOutOfRangeException()
+        };
+
+        for (var i = -radius; i <= radius; i++)
+        {
+            for (var j = -radius; j <= radius; j++)
+            {
+                if (i == 0 && j == 0)
+                {
+                    continue;
+                }
+
+                var v = new Vector2di(i, j);
+
+                if (v.Norm > magic)
+                {
+                    continue;
+                }
+
+                results.Add(v);
+            }
+        }
+
+        return results.ToArray();
+    });
+
+    public static readonly IReadOnlyDictionary<int, Vector2di[]> SightContours = SightOffsets.ToDictionary(kvp => kvp.Key, kvp =>
+    {
+        var disc = kvp.Value;
+        var results = new List<Vector2di>();
+
+        foreach (var item in kvp.Value)
+        {
+            foreach (var direction in Enum.GetValues<Direction>())
+            {
+                var neighbor = item + direction;
+
+                if (neighbor == Vector2di.Zero)
+                {
+                    continue;
+                }
+
+                if (!disc.Contains(neighbor))
+                {
+                    results.Add(item);
+                    break;
+                }
+            }
+        }
+
+        return results.ToArray();
+    });
+
     public Vector2di Position { get; init; }
     public int Hp { get; init; }
     public int Dig { get; init; }
