@@ -3,8 +3,16 @@ using Daleks;
 
 Console.Write("ID: ");
 var id = int.Parse(Console.ReadLine()!);
+Console.Write("\nRounds (150): ");
 
-const int rounds = 150;
+int rounds = 150;
+
+if (int.TryParse(Console.ReadLine(), out var i))
+{
+    rounds = i;
+}
+
+Console.WriteLine($"\nStarting player {id} @ {rounds} rounds");
 
 var manager = new GameManager(id, rounds);
 
