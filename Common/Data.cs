@@ -80,6 +80,21 @@ public class HashMultiMap<TKey, TValue> : IReadOnlyHashMultiMap<TKey, TValue> wh
     public bool Remove(TKey k, TValue v) => Map.TryGetValue(k, out var set) && set.Remove(v);
 }
 
+public class BiMap<TForward, TBackward> where TForward : notnull where TBackward : notnull
+{
+    public Dictionary<TForward, TBackward> Forward { get; } = new();
+    public Dictionary<TBackward, TForward> Backward { get; } = new();
+
+    public void Associate(TForward f, TBackward b)
+    {
+        Forward.Add(f, b);
+        Backward.Add(b, f);
+    }
+
+    public bool Contains(TForward f) => Forward.ContainsKey(f);
+    public bool Contains(TBackward b) => Backward.ContainsKey(b);
+}
+
 public sealed class Histogram<TKey> where TKey : notnull
 {
     public readonly Dictionary<TKey, int> Map = new();

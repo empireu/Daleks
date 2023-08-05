@@ -1,5 +1,5 @@
 ﻿using System.Net.Sockets;
-using ProxyNetworking;
+using Common;
 
 if (Directory.Exists("game"))
 {
@@ -9,7 +9,7 @@ if (Directory.Exists("game"))
 Directory.CreateDirectory("game");
 
 var host = Util.Prompt("Host: ");
-var port = Util.PromptInt("Port: ");
+var port = Util.PromptInt("Port (31415): ", 31415);
 var id = Util.PromptInt("ID: ");
 
 if (id is < 0 or > 5)
@@ -21,11 +21,9 @@ Console.WriteLine("Connecting...");
 
 using var client = new TcpClient(host, port);
 
-await client.GetStream().WriteIntAsync(id);
+client.SendInt(id);
 
-var accepted = (await client.GetStream().ReadIntAsync()) == 1;
-
-if (!accepted)
+if (client.ReceiveInt() != 1)
 {
     throw new Exception("Server rejected!");
 }
@@ -39,7 +37,7 @@ while (true)
     Console.WriteLine($"---- Round {round} ----");
     Console.WriteLine("Waiting for server...");
 
-    var serverData = await client.GetStream().ReadStringAsync();
+    var serverData = client.GetStream().ReadString();
 
     Console.WriteLine($"Read {serverData.Length}");
 
@@ -49,7 +47,7 @@ while (true)
 
     string clientData;
 
-    while (true)
+    while (true)    
     {
         try
         {
@@ -62,7 +60,7 @@ while (true)
         }
     }
 
-    await client.GetStream().WriteStringAsync(clientData);
+    client.SendString(clientData);
 
     Console.WriteLine("Done!\n\n");
 
