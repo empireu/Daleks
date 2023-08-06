@@ -1,9 +1,11 @@
 ﻿using System.Numerics;
 using System.Runtime.InteropServices;
 using Common;
+using GameFramework.Extensions;
 using GameFramework.Renderer;
 using GameFramework.Renderer.Batch;
 using GameFramework.Utilities.Extensions;
+using Veldrid;
 
 namespace Vizulacru;
 
@@ -42,6 +44,7 @@ internal struct Particle
     public int ID;
     public Pose2d Transform;
     public Twist2d Velocity;
+    public float InitialTime; // Could also store timestamp but CBA
     public float TimeRemaining;
     public float Scale;
 
@@ -68,7 +71,7 @@ internal interface IParticleMaterial
     void Submit(ReadOnlySpan<Particle> particles, QuadBatch batch);
 }
 
-sealed class TextureFragmentParticleMaterial : IParticleMaterial
+internal sealed class TextureFragmentParticleMaterial : IParticleMaterial
 {
     public TextureSampler Texture { get; }
 
@@ -96,6 +99,51 @@ sealed class TextureFragmentParticleMaterial : IParticleMaterial
                 new Vector2(max.X, min.Y),
                 min,
                 new Vector2(min.X, max.Y)
+            );
+        }
+    }
+}
+
+internal sealed class ColoredParticleMaterial : IParticleMaterial
+{
+    public Vector4 BaseColor { get; }
+    public Vector4 MinTintAffine { get; }
+    public Vector4 MaxTintAffine { get; }
+    public float FadeoutExp { get; }
+
+    public ColoredParticleMaterial(Vector4 baseColor, Vector4 minTintAffine, Vector4 maxTintAffine, float fadeoutExp)
+    {
+        BaseColor = baseColor;
+        MinTintAffine = minTintAffine;
+        MaxTintAffine = maxTintAffine;
+        FadeoutExp = fadeoutExp;
+    }
+
+    public void Submit(ReadOnlySpan<Particle> particles, QuadBatch batch)
+    {
+        var min = MinTintAffine;
+        var max = MaxTintAffine;
+
+        for (var i = 0; i < particles.Length; i++)
+        {
+            var particle = particles[i];
+            var random = new Random(particle.ID);
+            var progress = particle.TimeRemaining / particle.InitialTime;
+
+            var fade = 1f - MathF.Pow(progress, FadeoutExp);
+
+            var color = new RgbaFloat4(
+                BaseColor.X * (1f + random.NextFloat(min: min.X, max: max.X)),
+                BaseColor.Y * (1f + random.NextFloat(min: min.Y, max: max.Y)),
+                BaseColor.Z * (1f + random.NextFloat(min: min.Z, max: max.Z)),
+                BaseColor.W * (1f + random.NextFloat(min: min.W, max: max.W)) * fade
+            );
+
+            batch.Quad(
+                particle.Transform.Translation, 
+                new Vector2(particle.Scale), 
+                particle.Transform.Rotation.Log(),
+                color
             );
         }
     }
@@ -139,6 +187,7 @@ internal sealed class ParticleSystem
         {
             ID = _id++,
             Scale = scale,
+            InitialTime = lifeTime,
             TimeRemaining = lifeTime,
             Transform = transform,
             Velocity = velocity

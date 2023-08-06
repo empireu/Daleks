@@ -494,6 +494,7 @@ public sealed class GameSnapshot : IReadOnlyGrid<TileType>
     private readonly HashMultiMap<TileType, Vector2di> _discoveredTilesMulti = new();
 
     public IReadOnlyGrid<TileType> Grid => _grid;
+    public IReadOnlyList<TileType> Cells => _grid.Cells;
     public Vector2di Size => _grid.Size;
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
     public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTilesMulti => _discoveredTilesMulti;

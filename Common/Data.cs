@@ -11,11 +11,14 @@ public interface IReadOnlyGrid<out T>
     T this[Vector2di v] => this[v.X, v.Y];
     bool IsWithinBounds(int x, int y);
     bool IsWithinBounds(Vector2di v);
+    public IReadOnlyList<T> Cells { get; }
 }
 
 public sealed class Grid<T> : IReadOnlyGrid<T>
 {
     public T[] Storage { get; }
+
+    public IReadOnlyList<T> Cells => Storage;
 
     public Vector2di Size { get; }
 

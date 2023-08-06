@@ -21,15 +21,15 @@ public sealed class BotConfig : IBotConfig
 
     public Dictionary<Bot.ExploreMode, (float Player, float Base)> ExploreCostMultipliers { get; set; } = new()
     {
-        { Bot.ExploreMode.Closest, (1.0f, 0.25f) },
-        { Bot.ExploreMode.ClosestBase, (1.0f, 1.25f) }
+        { Bot.ExploreMode.Closest, (1f, 0f) },
+        { Bot.ExploreMode.ClosestBase, (1f, 1f) }
     };
 
     private const float BigCost = 10_000f;
 
     public Dictionary<TileType, float> CostMap { get; set; } = new()
     {
-        { TileType.Unknown, -25f },
+        { TileType.Unknown, -50f },
         { TileType.Dirt,    0f },
         { TileType.Stone,   5f },
         { TileType.Cobble,  5f },
@@ -57,7 +57,7 @@ public sealed class BotConfig : IBotConfig
         UpgradeType.Antenna
     };
 
-    public float PlayerOverrideCost { get; set; } = 100;
+    public float PlayerOverrideCost { get; set; } = 1000;
     public int ReserveOsmium { get; set; } = 0;
     public int RoundsMargin { get; set; } = 15;
 }
@@ -182,20 +182,28 @@ public sealed class Bot
     /// </summary>
     public ExploreMode ExplorationMode { get; private set; } = ExploreMode.ClosestBase;
 
-    private readonly List<AttackInfo> _attacks = new();
+    private readonly List<AttackInfo> _allAttacks = new();
 
     /// <summary>
     ///     Gets all attacks that have been initiated so far.
     /// </summary>
-    public IReadOnlyList<AttackInfo> Attacks => _attacks;
+    public IReadOnlyList<AttackInfo> AllAttacks => _allAttacks;
+
+    private readonly List<AttackInfo> _attacksRound = new();
+
+    public IReadOnlyList<AttackInfo> AttacksRound => _attacksRound;
 
     private readonly Dictionary<Vector2di, SpottedPlayerInfo> _spottedPlayers = new();
 
     private int? _lastHp;
 
-    private readonly List<TakenDamageInfo> _damageTaken = new();
+    private readonly List<TakenDamageInfo> _allDamageTaken = new();
 
-    public IReadOnlyList<TakenDamageInfo> DamageTaken => _damageTaken;
+    public IReadOnlyList<TakenDamageInfo> AllDamageTaken => _allDamageTaken;
+
+    private readonly List<TakenDamageInfo> _damageTakenRound = new();
+
+    public IReadOnlyList<TakenDamageInfo> DamageTakenRound => _damageTakenRound;
 
     public IReadOnlyDictionary<Vector2di, SpottedPlayerInfo> SpottedPlayers => _spottedPlayers;
 
@@ -318,9 +326,10 @@ public sealed class Bot
          *      * Encourages following the contour of the already explored region
          */
 
-        var tiles = _undiscoveredMiningCandidates.ToList();
-        tiles.Sort((a, b) => ExploreCost(player.Position, b).CompareTo(ExploreCost(player.Position, a)));
-
+        var tiles = _undiscoveredMiningCandidates
+            .OrderByDescending(x => ExploreCost(player.Position, x))
+            .ToList();
+        
         Vector2di? best = null;
         var bestCost = float.MaxValue;
         var offsets = Player.SightOffsets[player.Sight];
@@ -395,46 +404,32 @@ public sealed class Bot
 
             if (!_tileMap.Tiles[t].IsUnbreakable() && _undiscoveredMiningCandidates.Contains(t))
             {
+                Log("Using cached target...");
                 return _previousExploreTarget;
             }
         }
+
+        Log("Getting new target!", LogType.Warning);
 
         _previousExploreTarget = GetUnexploredTile(p);
         
         return _previousExploreTarget;
     }
 
-    /// <summary>
-    ///     Tries to take a step towards <see cref="target"/>.
-    /// </summary>
-    /// <param name="target">A position to step towards. If an unbreakable tile is recorded at that position, this routine will fail.</param>
-    /// <param name="cl"></param>
-    /// <param name="reached">True, if the target position has been reached (the player is at the target location). Otherwise, false.</param>
-    /// <param name="useObstacleMining">If true, mining will be used to clear tiles adjacent to the player. If false, the player will likely get stuck.</param>
-    /// <param name="useMiningFast">If true, mining will be done in an ahead-of-time fashion.</param>
-    /// <returns>True, if the step was performed successfully. Otherwise, false.</returns>
-    /// <exception cref="Exception">Thrown if the player movement state was changed prior to calling this routine.</exception>
-    private bool Step(Vector2di target, CommandState cl, out bool reached, bool useObstacleMining = true, bool useMiningFast = true)
+    private bool Step(
+        CommandState cl, 
+        IReadOnlyList<Vector2di> path, 
+        bool useObstacleMining = true,
+        bool useMiningFast = true)
     {
         if (cl.Head.Player.Position != cl.Tail.Player.Position)
         {
             throw new Exception("Invalid player state for movement");
         }
 
-        if (target == cl.Head.Player.Position)
+        if (path.First() != cl.Head.Player.Position)
         {
-            reached = true;
-            return true;
-        }
-        
-        reached = false;
-
-        var path = _tileMap.FindPath(cl.Head.Player.Position, target);
-
-        if (path == null)
-        {
-            Log($"No path was found to {target}", LogType.Warning);
-            return false;
+            throw new InvalidOperationException("Invalid path");
         }
 
         Path = path;
@@ -482,6 +477,37 @@ public sealed class Bot
         return true;
     }
 
+    /// <summary>
+    ///     Tries to take a step towards <see cref="target"/>.
+    /// </summary>
+    /// <param name="target">A position to step towards. If an unbreakable tile is recorded at that position, this routine will fail.</param>
+    /// <param name="cl"></param>
+    /// <param name="reached">True, if the target position has been reached (the player is at the target location). Otherwise, false.</param>
+    /// <param name="useObstacleMining">If true, mining will be used to clear tiles adjacent to the player. If false, the player will likely get stuck.</param>
+    /// <param name="useMiningFast">If true, mining will be done in an ahead-of-time fashion.</param>
+    /// <returns>True, if the step was performed successfully. Otherwise, false.</returns>
+    /// <exception cref="Exception">Thrown if the player movement state was changed prior to calling this routine.</exception>
+    private bool Step(Vector2di target, CommandState cl, out bool reached, bool useObstacleMining = true, bool useMiningFast = true)
+    {
+        if (target == cl.Head.Player.Position)
+        {
+            reached = true;
+            return true;
+        }
+
+        reached = false;
+
+        var path = _tileMap.FindPath(cl.Head.Player.Position, target);
+
+        if (path == null)
+        {
+            Log($"No path was found to {target}", LogType.Warning);
+            return false;
+        }
+
+        return Step(cl, path, useObstacleMining, useMiningFast);
+    }
+
     private bool Attack(CommandState cl, bool simulate = false)
     {
         var state = cl.Tail;
@@ -504,8 +530,9 @@ public sealed class Bot
                     if (!simulate)
                     {
                         cl.Attack(direction);
-
-                        _attacks.Add(new AttackInfo(cl.Tail.Player, cl.Tail.Round, p));
+                        var info = new AttackInfo(cl.Tail.Player, cl.Tail.Round, p);
+                        _allAttacks.Add(info);
+                        _attacksRound.Add(info);
                     }
                   
                     return true;
@@ -525,8 +552,8 @@ public sealed class Bot
     {
         var playerPos = cl.Head.Player.Position;
 
-        NextMiningTile = PendingOres.Count > 0
-            ? PendingOres.Keys.MinBy(x => Vector2di.DistanceSqr(x, playerPos))
+        NextMiningTile = PendingOres.Count > 0 
+            ? PendingOres.Keys.MinBy(x => Vector2di.DistanceSqr(x, playerPos)) 
             : GetNextExploreTarget(cl.Head.Player);
 
         if (!NextMiningTile.HasValue)
@@ -791,6 +818,7 @@ public sealed class Bot
         _logLevel = 0;
 
         _tileMap.BeginFrame();
+        _attacksRound.Clear();
     }
 
     private void UpdateSpottedPlayers(CommandState cl)
@@ -817,12 +845,8 @@ public sealed class Bot
         }
     }
 
-    private void UpdateCostOverrides()
+    private void LoadEnemyCostOverrides()
     {
-        Array.Fill(_tileMap.CostOverride.Storage, 0);
-
-        var offsets = Player.SightOffsets[3];
-
         if (_spottedPlayers.Count == 0)
         {
             return;
@@ -838,13 +862,13 @@ public sealed class Bot
 
             Log($"{tile} - round {round}");
 
-            foreach (var offset in offsets)
+            foreach (var offset in Player.SightOffsets[3])
             {
                 var pos = tile + offset;
 
                 if (_tileMap.IsWithinBounds(pos))
                 {
-                    _tileMap.CostOverride[pos] = Config.PlayerOverrideCost;
+                    _tileMap.CostOverride[pos] += Config.PlayerOverrideCost;
                 }
             }
         }
@@ -852,7 +876,7 @@ public sealed class Bot
         Unindent();
     }
 
-    private void RunBotLogic(CommandState cl)
+    private void RunDecisions(CommandState cl)
     {
         var player = cl.Head.Player;
         var isRetreat = AcidRounds - cl.Head.Round <= Config.RoundsMargin;
@@ -982,9 +1006,13 @@ public sealed class Bot
             return;
         }
 
+        _damageTakenRound.Clear();
+
         if (actualHp < _lastHp.Value)
         {
-            _damageTaken.Add(new TakenDamageInfo(_lastHp.Value - actualHp, cl.Head.Round));
+            var info = new TakenDamageInfo(_lastHp.Value - actualHp, cl.Head.Round);
+            _allDamageTaken.Add(info);
+            _damageTakenRound.Add(info);
         }
 
         _lastHp = actualHp;
@@ -995,9 +1023,9 @@ public sealed class Bot
         PrepareUpdate();
         UpdateTiles(cl);
         UpdateSpottedPlayers(cl);
-        UpdateCostOverrides();
+        LoadEnemyCostOverrides();
         UpdateIncomingDamage(cl);
-        RunBotLogic(cl);
+        RunDecisions(cl);
         EndUpdate();
     }
 

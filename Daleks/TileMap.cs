@@ -1,7 +1,6 @@
 ﻿using System.Diagnostics;
 using Common;
 using System.Runtime.CompilerServices;
-using Vector2di = Common.Vector2di;
 
 namespace Daleks;
 
@@ -45,11 +44,17 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
     private readonly FrameData _data = new();
 
+    public IReadOnlyList<TileType> Cells => Tiles.Cells;
+
     public Grid<float> CostOverride { get; }
 
     private readonly List<HashSet<Vector2di>> _unexploredClusters = new();
+    private readonly List<HashSet<Vector2di>> _exploredClusters = new();
+
+    public float GetCostOverride(TileType type) => _costMap[(int)type];
 
     public IReadOnlyList<IReadOnlySet<Vector2di>> UnexploredClusters => _unexploredClusters;
+    public IReadOnlyList<IReadOnlySet<Vector2di>> ExploredClusters => _exploredClusters;
 
     public TileMap(Vector2di size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
     {
@@ -100,30 +105,13 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         CostOverride = new Grid<float>(Size);
     }
 
-    private void ScanUnexploredClusters()
+    private IEnumerable<HashSet<Vector2di>> RemoveClusters(HashSet<Vector2di> unexplored, Func<TileType, bool> predicate)
     {
-        _unexploredClusters.Clear();
-
-        var unexplored = new HashSet<Vector2di>();
-
-        for (var y = 1; y < Size.Y - 1; y++)
-        {
-            for (var x = 1; x < Size.X - 1; x++)
-            {
-                var tile = new Vector2di(x, y);
-
-                if (Tiles[tile] == TileType.Unknown)
-                {
-                    unexplored.Add(tile);
-                }
-            }
-        }
-
         var queue = new Queue<Vector2di>();
 
         while (unexplored.Count > 0)
         {
-            queue.Enqueue(unexplored.Last());
+            queue.Enqueue(unexplored.First());
 
             var cluster = new HashSet<Vector2di>();
 
@@ -142,15 +130,45 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                 {
                     var neighbor = front + (Direction)i;
 
-                    if (Tiles.IsWithinBounds(neighbor) && Tiles[neighbor] == TileType.Unknown)
+                    if (Tiles.IsWithinBounds(neighbor) && predicate(Tiles[neighbor]))
                     {
                         queue.Enqueue(neighbor);
                     }
                 }
             }
 
-            _unexploredClusters.Add(cluster);
+            yield return cluster;
         }
+    }
+
+
+    private void ScanClusters()
+    {
+        _unexploredClusters.Clear();
+        _exploredClusters.Clear();
+
+        var unknownSource = new HashSet<Vector2di>(1024);
+        var knownSource = new HashSet<Vector2di>(1024);
+
+        for (var y = 1; y < Size.Y - 1; y++)
+        {
+            for (var x = 1; x < Size.X - 1; x++)
+            {
+                var tile = new Vector2di(x, y);
+
+                if (Tiles[tile] == TileType.Unknown)
+                {
+                    unknownSource.Add(tile);
+                }
+                else
+                {
+                    knownSource.Add(tile);
+                }
+            }
+        }
+
+        _unexploredClusters.AddRange(RemoveClusters(unknownSource, t => t == TileType.Unknown));
+        _exploredClusters.AddRange(RemoveClusters(knownSource, t => t != TileType.Unknown));
     }
 
     public void BeginFrame()
@@ -163,7 +181,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         _begun = true;
 
         _data.Clear();
-        ScanUnexploredClusters();
+        ScanClusters();
+        Array.Fill(CostOverride.Storage, 0);
     }
 
     public void EndFrame()
@@ -344,7 +363,23 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
         return FromExistingGrid(goalPoint, existingData);
     }
-    
+
+    public IReadOnlyGrid<PathfindingCell> GetPathfindingGrid(Vector2di startPoint)
+    {
+        Validate();
+
+        if (_data.Paths.TryGetValue(startPoint, out var existingData))
+        {
+            return existingData.Grid;
+        }
+
+        var grid = RunPathfinding(startPoint);
+        existingData = new FrameData.PathfindingInfo(startPoint, grid);
+        _data.Paths.Add(startPoint, existingData);
+
+        return grid;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float DiagonalCost(Vector2di cPos, Grid<PathfindingCell> grid)
     {
@@ -435,7 +470,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsWithinBounds(Vector2di v) => Tiles.IsWithinBounds(v);
 
-    private struct PathfindingCell : IComparable<PathfindingCell>
+    public struct PathfindingCell : IComparable<PathfindingCell>
     {
         public Vector2di? Ancestor;
         public float Cost;

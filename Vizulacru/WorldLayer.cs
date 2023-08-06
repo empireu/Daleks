@@ -151,8 +151,37 @@ internal sealed class WorldLayer : Layer, IDisposable
     private readonly TextureFragmentParticleMaterial _ironParticleMat;
     private readonly TextureFragmentParticleMaterial _osmiumParticleMat;
 
+    private readonly ColoredParticleMaterial _playerParticleMat1 = new(
+        new Vector4(0.9f, 1f, 0.9f, 0.6f),
+        new Vector4(-0.1f, -0.2f, -0.1f, -0.2f),
+        new Vector4(0.1f, 0.2f, 0.1f, 0.2f),
+        6f
+    );
+
+    private readonly ColoredParticleMaterial _playerParticleMat2 = new(
+        new Vector4(1.0f, 0.7f, 0.5f, 0.8f),
+        new Vector4(-0.1f, -0.2f, -0.1f, -0.2f),
+        new Vector4(0.1f, 0.2f, 0.1f, 0.2f),
+        6f
+    );
+
+    private readonly ColoredParticleMaterial _playerParticleMat3 = new(
+        new Vector4(1.0f, 0.2f, 0.4f, 0.8f),
+        new Vector4(-0.1f, -0.2f, -0.1f, -0.2f),
+        new Vector4(0.1f, 0.2f, 0.1f, 0.2f),
+        5f
+    );
+
+    private readonly ColoredParticleMaterial _enemyParticleMat = new(
+        new Vector4(1f, 0.7f, 0.6f, 0.4f),
+        new Vector4(-0.1f, -0.2f, -0.1f, -0.2f),
+        new Vector4(0.1f, 0.2f, 0.1f, 0.2f),
+        5f
+    );
+
     private IReadOnlyHashMultiMap<TileType, Vector2di>? _lastView;
     private readonly HashSet<(Vector2di, TileType)> _brokenTiles = new();
+    
     private readonly ParticleSystem _particles = new();
     
     private Vector2di MouseGrid
@@ -266,6 +295,7 @@ internal sealed class WorldLayer : Layer, IDisposable
                 ImGui.Text($"Grid size: {world.Size}");
                 ImGui.Text($"Selected: {world[mouse.X, mouse.Y]}");
                 ImGui.Text($"Discovery: {_controller.ExplorationMode}");
+                ImGui.Text($"Progress: {(_controller.DiscoveredTiles.Count / (float)_controller.Tiles.Cells.Count) * 100:F3}");
 
                 var ores = new Histogram<TileType>();
 
@@ -333,9 +363,9 @@ internal sealed class WorldLayer : Layer, IDisposable
 
             if (Begin("Attack Log"))
             {
-                if (_controller.Attacks.Count > 0)
+                if (_controller.AllAttacks.Count > 0)
                 {
-                    foreach (var attack in _controller.Attacks)
+                    foreach (var attack in _controller.AllAttacks)
                     {
                         ImGui.Text($"R: {attack.Round}, T: {attack.TargetPos}");
                         ImGui.Separator();
@@ -351,9 +381,9 @@ internal sealed class WorldLayer : Layer, IDisposable
 
             if (Begin("Damage Log"))
             {
-                if (_controller.DamageTaken.Count > 0)
+                if (_controller.AllDamageTaken.Count > 0)
                 {
-                    foreach (var loss in _controller.DamageTaken)
+                    foreach (var loss in _controller.AllDamageTaken)
                     {
                         ImGui.Text($"-{loss.Delta} HP @ {loss.Round}");
                         ImGui.Separator();
@@ -602,7 +632,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
-    private void RenderParticles()
+    private void RenderBlockParticles()
     {
         var random = Random.Shared;
 
@@ -656,6 +686,72 @@ internal sealed class WorldLayer : Layer, IDisposable
         _particles.Submit(_dynamicBatch);
     }
 
+    private void RenderDamageParticles()
+    {
+        if (_controller == null || _lastGameState == null)
+        {
+            return;
+        }
+
+        var random = Random.Shared;
+
+        void CreateParticle(IParticleMaterial material, Vector2 tilePos)
+        {
+            var posOffset = random!.NextVector2(min: -0.25f, max: 0.25f);
+            var particlePos = tilePos + posOffset;
+            var rot = Rotation2d.Exp(random!.NextFloat());
+            var trVelocity = new Vector2(random!.NextFloat(min: -2f, max: 2f), random.NextFloat(min: -4f, 0f));
+            var rotVelocity = random!.NextFloat(min: -5, max: 5);
+            var life = random!.NextFloat(min: 0.05f, max: 0.5f);
+            var scale = random!.NextFloat(min: 0.025f, max: 0.1f);
+
+            _particles.Create(new Pose2d
+            {
+                Translation = particlePos,
+                Rotation = rot
+            }, new Twist2d
+            {
+                TransVel = trVelocity,
+                RotVel = rotVelocity
+            }, life, material, scale);
+        }
+
+        void SubmitParticles(IParticleMaterial material, Vector2di tile)
+        {
+            var count = random!.Next(5, 10);
+            var tilePos = GridPos(tile);
+
+            for (int i = 0; i < count; i++)
+            {
+                CreateParticle(material, tilePos);
+            }
+        }
+
+        foreach (var info in _controller.DamageTakenRound)
+        {
+            var delta = Math.Abs(info.Delta);
+
+            SubmitParticles(
+                delta switch
+                {
+                    1 => _playerParticleMat1,
+                    2 => _playerParticleMat2,
+                    3 => _playerParticleMat3,
+                    _ => _playerParticleMat3
+                }, 
+                _lastGameState.Player.Position
+            );
+        }
+
+        foreach (var attack in _controller.AttacksRound)
+        {
+            SubmitParticles(
+                _enemyParticleMat, 
+                attack.TargetPos
+            );
+        }
+    }
+
     private void RenderAttackHistory()
     {
         if (_controller == null)
@@ -665,7 +761,7 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         var attackIntensities = new Histogram<Vector2di>();
 
-        foreach (var attack in _controller.Attacks)
+        foreach (var attack in _controller.AllAttacks)
         {
             attackIntensities[attack.TargetPos]++;
         }
@@ -786,14 +882,14 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
 
         RenderPass(RenderTerrain);
-        RenderPass(RenderParticles);
+        RenderPass(RenderBlockParticles);
         RenderPass(RenderAttackHistory);
         RenderPass(RenderView);
         RenderPass(RenderSpottedPlayers);
         RenderPass(RenderMiningTarget);
         RenderPass(RenderPath);
-
         RenderPass(RenderHighlight);
+        RenderPass(RenderDamageParticles);
 
         _postProcess.Render();
     }
