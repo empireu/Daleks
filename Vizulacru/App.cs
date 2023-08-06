@@ -1,9 +1,15 @@
-﻿using System.Text.Json;
+﻿using System.Drawing;
+using System.Numerics;
+using System.Text.Json;
 using Common;
 using Daleks;
 using GameFramework;
 using GameFramework.Assets;
+using GameFramework.Gui;
 using GameFramework.ImGui;
+using GameFramework.Renderer.Batch;
+using GameFramework.Renderer.Text;
+using GameFramework.Scene;
 using GameFramework.Utilities.Extensions;
 using ImGuiNET;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +41,11 @@ internal sealed class ConfigStore
 
 internal sealed class App : GameApplication
 {
+    private const float DefaultWeight = 0.465f;
+    private const float DefaultSmoothing = 0.015f;
+    private const float ToastWeight = 0.45f;
+    private const float ToastSmoothing = 0.05f;
+
     private readonly IServiceProvider _serviceProvider;
     private int _selectedId;
 
@@ -42,6 +53,11 @@ internal sealed class App : GameApplication
 
     private readonly ConfigStore _configs;
     private string _selectedConfig;
+
+    public SdfFont Font { get; }
+    public ToastManager ToastManager { get; }
+    private readonly QuadBatch _toastBatch;
+    private readonly OrthographicCameraController2D _fullCamera = new(new OrthographicCamera(0, -1, 1));
 
     public App(IServiceProvider serviceProvider)
     {
@@ -63,6 +79,24 @@ internal sealed class App : GameApplication
         }
 
         LoadConfig(BotConfig.Default);
+
+        Font = Resources.AssetManager.GetOrAddFont(Asset("Fonts.Roboto.font"));
+        SetDefaultFont();
+        ToastManager = new ToastManager(Font);
+        _toastBatch = Resources.BatchPool.Get();
+        ResizeCamera();
+    }
+
+    private void ResizeCamera()
+    {
+        _fullCamera.Camera.AspectRatio = Window.Width / (float)Window.Height;
+    }
+
+    protected override void Resize(Size size)
+    {
+        ResizeCamera();
+
+        base.Resize(size);
     }
 
     protected override IServiceProvider BuildLayerServiceProvider(ServiceCollection registeredServices)
@@ -269,10 +303,37 @@ internal sealed class App : GameApplication
 
                 ImGui.Unindent();
             }
-           
         }
 
         ImGui.End();
+    }
+
+    private void SetDefaultFont()
+    {
+        Font.Options.SetWeight(DefaultWeight);
+        Font.Options.SetSmoothing(DefaultSmoothing);
+    }
+
+    private void SetToastFont()
+    {
+        Font.Options.SetWeight(ToastWeight);
+        Font.Options.SetSmoothing(ToastSmoothing);
+    }
+
+    protected override void AfterRender(FrameInfo frameInfo)
+    {
+        SetToastFont();
+
+        _toastBatch.Clear();
+        _toastBatch.Effects = QuadBatchEffects.Transformed(_fullCamera.Camera.CameraMatrix);
+
+        ToastManager.Render(_toastBatch, 0.05f, -Vector2.UnitY * 0.35f, 0.925f);
+
+        _toastBatch.Submit();
+
+        SetDefaultFont();
+
+        base.AfterRender(frameInfo);
     }
 
     public static EmbeddedResourceKey Asset(string name)
@@ -283,6 +344,7 @@ internal sealed class App : GameApplication
     protected override void Destroy()
     {
         ImGui.SaveIniSettingsToDisk("imgui_vizulacru.ini");
+        Resources.BatchPool.Return(_toastBatch);
 
         base.Destroy();
     }

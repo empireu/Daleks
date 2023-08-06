@@ -1,6 +1,7 @@
 ﻿using System.Drawing;
 using System.Net.Sockets;
 using System.Numerics;
+using System.Runtime.Intrinsics;
 using System.Text;
 
 namespace Common;
@@ -109,5 +110,15 @@ public static class Extensions
     public static int ReceiveInt(this TcpClient client)
     {
         return client.GetStream().ReadInt();
+    }
+    
+    public static bool ApproxEq(this float f, float other, float threshold = 1e-7f)
+    {
+        return Math.Abs(f - other) < threshold;
+    }
+
+    public static bool ApproxEq(this double d, double other, double threshold = 1e-7)
+    {
+        return Math.Abs(d - other) < threshold;
     }
 }

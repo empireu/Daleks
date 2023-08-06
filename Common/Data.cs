@@ -48,6 +48,7 @@ public sealed class Grid<T> : IReadOnlyGrid<T>
 
 public interface IReadOnlyHashMultiMap<in TKey, TValue>
 {
+    int Count { get; }
     IReadOnlySet<TValue> this[TKey k] { get; }
     bool ContainsKey(TKey k);
 }
@@ -59,6 +60,7 @@ public class HashMultiMap<TKey, TValue> : IReadOnlyHashMultiMap<TKey, TValue> wh
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private HashSet<TValue> Get(TKey k) => Map.TryGetValue(k, out var e) ? e : new HashSet<TValue>().Also(s => Map.Add(k, s));
 
+    public int Count => Map.Count;
     public HashSet<TValue> this[TKey k] => Get(k);
 
     IReadOnlySet<TValue> IReadOnlyHashMultiMap<TKey, TValue>.this[TKey k] => Get(k);

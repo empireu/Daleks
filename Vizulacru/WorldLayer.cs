@@ -6,6 +6,7 @@ using System.Threading.Channels;
 using Common;
 using Daleks;
 using GameFramework.Extensions;
+using GameFramework.Gui;
 using GameFramework.ImGui;
 using GameFramework.Layers;
 using GameFramework.PostProcessing;
@@ -145,6 +146,15 @@ internal sealed class WorldLayer : Layer, IDisposable
     private Bot? _controller;
     private GameSnapshot? _lastGameState;
 
+    private readonly TextureFragmentParticleMaterial _cobbleParticleMat;
+    private readonly TextureFragmentParticleMaterial _stoneParticleMat;
+    private readonly TextureFragmentParticleMaterial _ironParticleMat;
+    private readonly TextureFragmentParticleMaterial _osmiumParticleMat;
+
+    private IReadOnlyHashMultiMap<TileType, Vector2di>? _lastView;
+    private readonly HashSet<(Vector2di, TileType)> _brokenTiles = new();
+    private readonly ParticleSystem _particles = new();
+    
     private Vector2di MouseGrid
     {
         get
@@ -206,8 +216,13 @@ internal sealed class WorldLayer : Layer, IDisposable
         _game = new RemoteGame(remoteGameLogger, app.SelectedId, 150);
 
         _imGui.Submit += ImGuiOnSubmit;
+
+        _stoneParticleMat = new TextureFragmentParticleMaterial(textures.StoneTile);
+        _cobbleParticleMat = new TextureFragmentParticleMaterial(textures.CobblestoneTile);
+        _ironParticleMat = new TextureFragmentParticleMaterial(textures.IronTile);
+        _osmiumParticleMat = new TextureFragmentParticleMaterial(textures.OsmiumTile);
     }
-    
+
     private void ImGuiOnSubmit(ImGuiRenderer obj)
     {
         ImGui.DockSpaceOverViewport(ImGui.GetMainViewport(), ImGuiDockNodeFlags.PassthruCentralNode);
@@ -463,6 +478,47 @@ internal sealed class WorldLayer : Layer, IDisposable
         _controller.Update(cl);
         _game.Submit(cl);
         _lastGameState = state;
+
+        if (_lastView == null)
+        {
+            _lastView = cl.Head.DiscoveredTilesMulti;
+        }
+        else
+        {
+            _brokenTiles.Clear();
+
+            void CollectEvents(TileType type)
+            {
+                if (!_lastView!.ContainsKey(type))
+                {
+                    return;
+                }
+
+                var tiles = _lastView[type];
+                var brokenCount = 0;
+
+                foreach (var tile in tiles)
+                {
+                    if (cl!.Head[tile] != TileType.Unknown && cl.Head[tile] != type)
+                    {
+                        _brokenTiles.Add((tile, type));
+                        ++brokenCount;
+                    }
+                }
+
+                if (brokenCount > 0 && type is TileType.Osmium or TileType.Iron)
+                {
+                    _app.ToastManager.Add(new ToastNotification(ToastNotificationType.Information, $"+{brokenCount} {type}"));
+                }
+            }
+
+            CollectEvents(TileType.Stone);
+            CollectEvents(TileType.Cobble);
+            CollectEvents(TileType.Iron);
+            CollectEvents(TileType.Osmium);
+
+            _lastView = cl.Head.DiscoveredTilesMulti;
+        }
     }
 
     protected override void Update(FrameInfo frameInfo)
@@ -479,9 +535,7 @@ internal sealed class WorldLayer : Layer, IDisposable
     }
 
     private static Vector2 GridPos(Vector2di pos) => new(pos.X, -pos.Y);
-    private static Vector2 GridPos(Vector2 pos) => new(pos.X, -pos.Y);
     private static Vector2 GridPos(int x, int y) => new(x, -y);
-    private static Vector2 GridPos(float x, float y) => new(x, -y);
 
     private void RenderHighlight()
     {
@@ -548,6 +602,60 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
     }
 
+    private void RenderParticles()
+    {
+        var random = Random.Shared;
+
+        foreach (var (tile, type) in _brokenTiles)
+        {
+            IParticleMaterial material;
+
+            switch (type)
+            {
+                case TileType.Stone:
+                    material = _stoneParticleMat;
+                    break;
+                case TileType.Cobble:
+                    material = _cobbleParticleMat;
+                    break;
+                case TileType.Iron:
+                    material = _ironParticleMat;
+                    break;
+                case TileType.Osmium:
+                    material = _osmiumParticleMat;
+                    break;
+                default:
+                    continue;
+            }
+
+            var count = random.Next(10, 25);
+            var tilePos = GridPos(tile);
+
+            for (var i = 0; i < count; i++)
+            {
+                var posOffset = random.NextVector2(min: -0.25f, max: 0.25f);
+                var particlePos = tilePos + posOffset;
+                var rot = Rotation2d.Exp(random.NextFloat());
+                var trVelocity = Vector2.Normalize(particlePos - tilePos) * random.NextFloat(min: 0f, max: 2f);
+                var rotVelocity = random.NextFloat(min: -5, max: 5);
+                var life = random.NextFloat(min: 0.05f, max: 0.5f);
+                var scale = random.NextFloat(min: 0.05f, max: 0.2f);
+
+                _particles.Create(new Pose2d
+                {
+                    Translation = particlePos,
+                    Rotation = rot
+                }, new Twist2d
+                {
+                    TransVel = trVelocity,
+                    RotVel = rotVelocity
+                }, life, material, scale);
+            }
+        }
+
+        _particles.Submit(_dynamicBatch);
+    }
+
     private void RenderAttackHistory()
     {
         if (_controller == null)
@@ -591,7 +699,7 @@ internal sealed class WorldLayer : Layer, IDisposable
 
         foreach (var discoveredTile in _lastGameState.DiscoveredTiles)
         {
-            _dynamicBatch.Quad(GridPos(discoveredTile), TileScale, new RgbaFloat4(0f, 0f, 1f, 0.2f));
+            _dynamicBatch.Quad(GridPos(discoveredTile), TileScale, new RgbaFloat4(0f, 0f, 1f, 0.15f));
         }
     }
 
@@ -643,7 +751,7 @@ internal sealed class WorldLayer : Layer, IDisposable
             return;
         }
 
-        _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.3f));
+        _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value), TileScale * 0.5f, new RgbaFloat4(0.1f, 1f, 0.2f, 0.15f));
 
         var player = _lastGameState.Player;
 
@@ -654,8 +762,15 @@ internal sealed class WorldLayer : Layer, IDisposable
         {
             var scale = contours.Contains(offset) ? TileScale * 1f : TileScale * 0.8f;
 
-            _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value + offset), scale, new RgbaFloat4(1f, 0.1f, 0.1f, 0.4f));
+            _dynamicBatch.Quad(GridPos(_controller.NextMiningTile.Value + offset), scale, new RgbaFloat4(1f, 0.1f, 0.1f, 0.175f));
         }
+    }
+
+    protected override void BeforeUpdate(FrameInfo frameInfo)
+    {
+        base.BeforeUpdate(frameInfo);
+
+        _particles.Update(frameInfo.DeltaTime);
     }
 
     protected override void Render(FrameInfo frameInfo)
@@ -671,6 +786,7 @@ internal sealed class WorldLayer : Layer, IDisposable
         }
 
         RenderPass(RenderTerrain);
+        RenderPass(RenderParticles);
         RenderPass(RenderAttackHistory);
         RenderPass(RenderView);
         RenderPass(RenderSpottedPlayers);

@@ -1,11 +1,14 @@
 ﻿using GameFramework;
 using GameFramework.ImGui;
+using MessagePack;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Events;
 using Vizulacru;
 using Vizulacru.Assets;
+
+MessagePackSerializer.DefaultOptions = MessagePack.Resolvers.ContractlessStandardResolver.Options;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Is(LogEventLevel.Verbose)
