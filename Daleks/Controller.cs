@@ -22,7 +22,7 @@ public sealed class BotConfig : IBotConfig
     public Dictionary<Bot.ExploreMode, (float Player, float Base)> ExploreCostMultipliers { get; set; } = new()
     {
         { Bot.ExploreMode.Closest, (1.0f, 0.25f) },
-        { Bot.ExploreMode.ClosestBase, (1.0f, 1.5f) }
+        { Bot.ExploreMode.ClosestBase, (1.0f, 1.25f) }
     };
 
     private const float BigCost = 10_000f;
@@ -44,20 +44,21 @@ public sealed class BotConfig : IBotConfig
         { TileType.Robot4,  BigCost }
     };
 
-    public float DiagonalPenalty { get; set; } = 10f;
+    public float DiagonalPenalty { get; set; } = 100f;
 
-    public UpgradeType[] UpgradeList { get; set; } = new[]
+    public UpgradeType[] UpgradeList { get; set; } = 
     {
         UpgradeType.Sight,
-        UpgradeType.Movement,
-        UpgradeType.Sight,
+        UpgradeType.Attack,
         UpgradeType.Movement,
         UpgradeType.Attack,
-        UpgradeType.Attack
+        UpgradeType.Sight,
+        UpgradeType.Movement,
+        UpgradeType.Antenna
     };
 
     public float PlayerOverrideCost { get; set; } = 100;
-    public int ReserveOsmium { get; set; } = 1;
+    public int ReserveOsmium { get; set; } = 0;
     public int RoundsMargin { get; set; } = 15;
 }
 
@@ -503,7 +504,13 @@ public sealed class Bot
             Log("Can attack whilst mining!");
         }
 
-        var success = Step(NextMiningTile.Value, cl, out var reached, useObstacleMining: true, useMiningFast: !canAttack);
+        var success = Step(
+            NextMiningTile.Value, 
+            cl, 
+            out var reached, 
+            useObstacleMining: true, 
+            useMiningFast: !canAttack
+        );
 
         Log($"Step: {success}");
 
@@ -812,10 +819,10 @@ public sealed class Bot
 
         if (player.HasBattery)
         {
-            while (cl is { CanBuy: true, CouldHeal: true })
+            while (cl is { CanBuy: true, CouldHeal: true } && player.Hp < 10)
             {
                 var healed = cl.Heal();
-                Log($"Healing@{cl.Tail.Player.Hp} {healed}");
+                Log($"Healing @ {cl.Tail.Player.Hp} {healed}");
                 Debug.Assert(healed);
             }
 
