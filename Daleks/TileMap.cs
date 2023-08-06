@@ -47,6 +47,10 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
     public Grid<float> CostOverride { get; }
 
+    private readonly List<HashSet<Vector2di>> _unexploredClusters = new();
+
+    public IReadOnlyList<IReadOnlySet<Vector2di>> UnexploredClusters => _unexploredClusters;
+
     public TileMap(Vector2di size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
     {
         _diagonalPenalty = diagonalPenalty;
@@ -96,6 +100,59 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         CostOverride = new Grid<float>(Size);
     }
 
+    private void ScanUnexploredClusters()
+    {
+        _unexploredClusters.Clear();
+
+        var unexplored = new HashSet<Vector2di>();
+
+        for (var y = 1; y < Size.Y - 1; y++)
+        {
+            for (var x = 1; x < Size.X - 1; x++)
+            {
+                var tile = new Vector2di(x, y);
+
+                if (Tiles[tile] == TileType.Unknown)
+                {
+                    unexplored.Add(tile);
+                }
+            }
+        }
+
+        var queue = new Queue<Vector2di>();
+
+        while (unexplored.Count > 0)
+        {
+            queue.Enqueue(unexplored.Last());
+
+            var cluster = new HashSet<Vector2di>();
+
+            while (queue.Count > 0)
+            {
+                var front = queue.Dequeue();
+
+                if (!cluster.Add(front))
+                {
+                    continue;
+                }
+
+                unexplored.Remove(front);
+
+                for (byte i = 0; i < 4; i++)
+                {
+                    var neighbor = front + (Direction)i;
+
+                    if (Tiles.IsWithinBounds(neighbor) && Tiles[neighbor] == TileType.Unknown)
+                    {
+                        queue.Enqueue(neighbor);
+                    }
+                }
+            }
+
+            _unexploredClusters.Add(cluster);
+        }
+    }
+
     public void BeginFrame()
     {
         if (_begun)
@@ -106,6 +163,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         _begun = true;
 
         _data.Clear();
+        ScanUnexploredClusters();
     }
 
     public void EndFrame()

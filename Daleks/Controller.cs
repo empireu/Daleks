@@ -124,6 +124,8 @@ public sealed class Log
 
 public sealed class Bot
 {
+    private const int SmallCluster = 50;
+
     public IBotConfig Config { get; }
     public MatchInfo Match { get; }
     public int AcidRounds { get; }
@@ -290,7 +292,7 @@ public sealed class Bot
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float ExploreHeuristic(Vector2di player, Vector2di target)
+    private float ExploreCost(Vector2di player, Vector2di target)
     {
         var (kp, kb) = Config.ExploreCostMultipliers[ExplorationMode];
      
@@ -299,8 +301,25 @@ public sealed class Bot
     
     private Vector2di? GetUnexploredTile(Player player)
     {
+        /*
+         * Tiles are initially sorted using costs based on:
+         *  - Distance to the player
+         *      * Naturally the fastest tile to get to
+         *  - Distance to the base
+         *      * Keeps player closer to the base at the start of the round (so buying the battery is faster)
+         *      * Makes the explored region evolve in a more cohesive fashion (instead of just going deep around the map)
+         * P.S. They are sorted from worst to best
+         *
+         * A number of the best tiles are then evaluated using 2 criteria:
+         *  - a. How many view tiles would be out of bounds if exploring the tile
+         *      * Prevents crawling across the edge and wasting a lot of view tiles
+         *  - b. How many view tiles would end up on already explored tiles
+         *      * Is considered to be an efficiency metric
+         *      * Encourages following the contour of the already explored region
+         */
+
         var tiles = _undiscoveredMiningCandidates.ToList();
-        tiles.Sort((a, b) => ExploreHeuristic(player.Position, b).CompareTo(ExploreHeuristic(player.Position, a)));
+        tiles.Sort((a, b) => ExploreCost(player.Position, b).CompareTo(ExploreCost(player.Position, a)));
 
         Vector2di? best = null;
         var bestCost = float.MaxValue;
@@ -310,7 +329,7 @@ public sealed class Bot
 
         while (tiles.Count > 0 && searched++ < 32)
         {
-            var candidate = tiles.Last();
+            var candidate = tiles.Last(); // Worst to best
             tiles.RemoveAt(tiles.Count - 1);
 
             var cost = 0f;
@@ -323,10 +342,12 @@ public sealed class Bot
 
                     if (!_tileMap.IsWithinBounds(target))
                     {
+                        // a.
                         cost += 0.25f;
                     }
                     else if (_tileMap.Tiles[target] != TileType.Unknown)
                     {
+                        // b.
                         cost += 1f;
                     }
                 }
@@ -350,6 +371,24 @@ public sealed class Bot
 
     private Vector2di? GetNextExploreTarget(Player p)
     {
+        /*
+        * Preventing gaps
+        *  - Finding clusters of unexplored tiles with number of tiles below threshold
+        *  - Prioritize exploring those
+        */
+
+        if (_tileMap.UnexploredClusters.Count > 0)
+        {
+            var smallest = _tileMap.UnexploredClusters.MinBy(x => x.Count)!;
+
+            if (smallest.Count <= SmallCluster)
+            {
+                // Target barycenter
+                Log($"Exploring cluster of {smallest.Count}", LogType.Warning);
+                return Vector2di.BarycenterMany(smallest).Round();
+            }
+        }
+
         if (_previousExploreTarget.HasValue)
         {
             var t = _previousExploreTarget.Value;
