@@ -29,13 +29,13 @@ public sealed class BotConfig : IBotConfig
 
     public Dictionary<TileType, float> CostMap { get; set; } = new()
     {
-        { TileType.Unknown, 20f },
-        { TileType.Dirt,    50f },
-        { TileType.Stone,   100f },
-        { TileType.Cobble,  100f },
-        { TileType.Iron,    0f },
-        { TileType.Osmium,  0f },
-        { TileType.Base,    100f },
+        { TileType.Unknown, -25f },
+        { TileType.Dirt,    0f },
+        { TileType.Stone,   5f },
+        { TileType.Cobble,  5f },
+        { TileType.Iron,    -100f },
+        { TileType.Osmium,  -1000f },
+        { TileType.Base,    0f },
         { TileType.Acid,    BigCost },
         { TileType.Robot0,  BigCost },
         { TileType.Robot1,  BigCost },
@@ -286,6 +286,7 @@ public sealed class Bot
         Unindent();
 
         _pendingOres.Remove(playerPos);
+        _undiscoveredMiningCandidates.Remove(playerPos);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -299,7 +300,6 @@ public sealed class Bot
     private Vector2di? GetUnexploredTile(Player player)
     {
         var tiles = _undiscoveredMiningCandidates.ToList();
-
         tiles.Sort((a, b) => ExploreHeuristic(player.Position, b).CompareTo(ExploreHeuristic(player.Position, a)));
 
         Vector2di? best = null;
@@ -323,7 +323,7 @@ public sealed class Bot
 
                     if (!_tileMap.IsWithinBounds(target))
                     {
-                        cost += 0.5f;
+                        cost += 0.25f;
                     }
                     else if (_tileMap.Tiles[target] != TileType.Unknown)
                     {
@@ -421,6 +421,7 @@ public sealed class Bot
                     {
                         cl.Mine(move);
                     }
+
                     return true;
                 }
 

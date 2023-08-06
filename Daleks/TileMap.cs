@@ -63,11 +63,24 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             {
                 throw new Exception("Validation failed");
             }
+        }
 
-            if (cost < 0)
+        var minCost = costMap.Values.Min();
+
+        if (minCost < 0)
+        {
+            // Normalize costs:
+            var n = Math.Abs(minCost);
+
+            foreach (var tile in costMap.Keys)
             {
-                throw new Exception($"Invalid cost {cost}");
+                _costMap[(int)tile] += n;
             }
+        }
+
+        if (_costMap.Any(c => c < 0))
+        {
+            throw new Exception("Validation failed");
         }
 
         if (diagonalPenalty < 0)
