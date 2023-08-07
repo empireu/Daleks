@@ -128,6 +128,9 @@ public sealed class Bot
 
     public IBotConfig Config { get; }
     public MatchInfo Match { get; }
+
+    private readonly IReadOnlySet<Vector2di> _centerTiles;
+
     public int AcidRounds { get; }
 
     private readonly TileMap _tileMap;
@@ -238,6 +241,19 @@ public sealed class Bot
         {
             _upgradeQueue.Enqueue(abilityType);
         }
+
+        _centerTiles = new HashSet<Vector2di>().Also(hs =>
+        {
+            var center = match.GridSize / 2;
+
+            for (var i = -1; i <= 1; i++)
+            {
+                for (var j = -1; j <= 1; j++)
+                {
+                    hs.Add(center + new Vector2di(i, j));
+                }
+            }
+        });
     }
 
     private void Log(string text, LogType type = LogType.Info)
@@ -640,87 +656,31 @@ public sealed class Bot
         return true;
     }
 
-    public void UpdateRetreat(CommandState cl)
+    private enum EnemyCenterStrategy
     {
-        var retreatTarget = Match.GridSize / 2;
-        var canAttack = Attack(cl, simulate: true);
-        var isAcidDetected = cl.DiscoveredTilesMulti.ContainsKey(TileType.Acid);
-        var isAcidCritical = Enum.GetValues<Direction>().Count(dir =>
-        {
-            var pos = cl.Head.Player.Position + dir;
-            return Tiles.IsWithinBounds(pos) && Tiles[pos] == TileType.Acid;
-        }) >= 2;
+        None,
+        Boxing,
+        Undetermined
+    }
 
-        // Detect box
-        if (cl.Tail.DiscoveredTiles.Contains(retreatTarget))
-        {
-            if (_tileMap.Tiles[retreatTarget].IsRobot())
-            {
-                var box = true;
+    private Vector2di AssessRetreatOptions(CommandState cl, out EnemyCenterStrategy enemyStrategy)
+    {
+        var target = Match.GridSize / 2;
 
-                /*
-                 * A player is camping at the center of the map. If they are boxed in, it means they are employing a strategy to block players from
-                 * reaching the center. An example is the strabun bot.
-                 * It is likely that tiles will be re-placed as soon as we break them. As such, we will redirect to a corner of the box.
-                 * The enemy will not be able to place there and we will be safe from acid.
-                 * This will result in a stalemate.
-                 */
+        bool EnemiesAtCenter() => cl.DiscoveredTiles.Any(t => _tileMap.Tiles[t].IsRobot() && _centerTiles.Contains(t));
 
-                foreach (var direction in Enum.GetValues<Direction>())
-                {
-                    if (_tileMap.Tiles[retreatTarget + direction].IsWalkable())
-                    {
-                        box = false;
-                        break;
-                    }
-                }
-
-                if (box)
-                {
-                    Log("ENEMY BOX DETECTED!", LogType.Peril);
-
-                    var player = cl.Tail.Player;
-
-                    var candidates = new[]
-                    {
-                        retreatTarget + new Vector2di(-1, 1),
-                        retreatTarget + new Vector2di(1, 1),
-                        retreatTarget + new Vector2di(-1, -1),
-                        retreatTarget + new Vector2di(1, -1)
-                    }.Where(c => _tileMap.CanAccess(player.Position, c))
-                        .OrderBy(c => Vector2di.DistanceSqr(c, player.Position));
-
-                    var found = false;
-
-                    foreach (var candidate in candidates)
-                    {
-                        if (!_tileMap.Tiles[candidate].IsUnbreakable()) // may be elided once we figure out the details of CanAccess
-                        {
-                            Log("Found candidate for anti-box retreat!", LogType.Warning);
-                            retreatTarget = candidate;
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found)
-                    {
-                        Log("NO CANDIDATES FOR ESCAPE!", LogType.Peril);
-                    }
-                }
-            }
-        }
-
-        // Detect blocked off center
-        if (_tileMap.Tiles[retreatTarget].IsUnbreakable())
+        /*
+         * Detects blocked-off center
+         * This disables the boxing strategy implicitly.
+         * - Undetermined (if any players are at center)
+         * - None
+         */
+        if (_tileMap.Tiles[target].IsUnbreakable())
         {
             Log("Map center is unbreakable!", LogType.Warning);
 
-            // Edge case that happens with a high probability on small maps.
-            // We'll just search for the closest non-unbreakable tile.
-
-            var queue = new Queue<Vector2di>();
-            queue.Enqueue(retreatTarget);
+            var queue = new PriorityQueue<Vector2di, int>();
+            queue.Enqueue(target, 0);
             var traversed = new HashSet<Vector2di>();
 
             while (queue.Count > 0)
@@ -734,9 +694,9 @@ public sealed class Bot
 
                 if (!_tileMap.Tiles[front].IsUnbreakable())
                 {
-                    retreatTarget = front;
+                    target = front;
                     Indent();
-                    Log($"Falling back to {retreatTarget}");
+                    Log($"Falling back to {target}");
                     Unindent();
                     break;
                 }
@@ -747,10 +707,117 @@ public sealed class Bot
 
                     if (_tileMap.IsWithinBounds(neighbor))
                     {
-                        queue.Enqueue(neighbor);
+                        var type = _tileMap.Tiles[neighbor];
+
+                        if (!type.IsUnbreakable())
+                        {
+                            queue.Enqueue(neighbor, type.IsWalkable() ? 0 : 1);
+                        }
                     }
                 }
             }
+
+            // Boxing strategy is impossible now, so the only other options are None or Undetermined
+
+            // We'll choose Undetermined if a player is in the center.
+
+            // Consider tiles in view (so they are up-to-date)
+            enemyStrategy =
+                EnemiesAtCenter() 
+                    ? EnemyCenterStrategy.Undetermined 
+                    : EnemyCenterStrategy.None;
+
+            return target;
+        }
+
+        /*
+         * Detects box
+         * - Boxed (if player is surrounded by non-walkable tiles)
+         * - Undetermined (if a player is at the center center, but not boxed in)
+         */
+        if (cl.DiscoveredTiles.Contains(target) && _tileMap.Tiles[target].IsRobot())
+        {
+            var isBoxed = Enum
+                .GetValues<Direction>()
+                .All(direction => !_tileMap.Tiles[target + direction].IsWalkable());
+
+            /*
+             * A player is camping at the center of the map. If they are boxed in, it means they are employing a strategy to block players from
+             * reaching the center. An example is mars_bot.
+             * It is likely that tiles will be re-placed as soon as we break them. As such, we will redirect to a corner of the box.
+             * The enemy will not be able to place there and we will be safe from acid.
+             * This will result in a stalemate.
+             */
+
+            if (isBoxed)
+            {
+                var player = cl.Tail.Player;
+
+                var candidates = new[]
+                {
+                        target + new Vector2di(-1, 1),
+                        target + new Vector2di(1, 1),
+                        target + new Vector2di(-1, -1),
+                        target + new Vector2di(1, -1)
+                }.Where(c => _tileMap.CanAccess(player.Position, c))
+                    .OrderBy(c => Vector2di.DistanceSqr(c, player.Position));
+
+                var cornerFound = false;
+
+                foreach (var candidate in candidates)
+                {
+                    if (!_tileMap.Tiles[candidate].IsUnbreakable()) // may be elided once we figure out the details of CanAccess
+                    {
+                        Log("Found candidate for anti-box retreat!", LogType.Warning);
+                        target = candidate;
+                        cornerFound = true;
+                        break;
+                    }
+                }
+
+                if (!cornerFound)
+                {
+                    Log("No anti-box candidates!", LogType.FTL);
+                }
+
+                enemyStrategy = EnemyCenterStrategy.Boxing;
+            }
+            else
+            {
+                // If center tile is robot, then enemies are at center implicitly.
+                enemyStrategy = EnemyCenterStrategy.Undetermined;
+            }
+
+            return target;
+        }
+
+        enemyStrategy = EnemiesAtCenter() ? EnemyCenterStrategy.Undetermined : EnemyCenterStrategy.None;
+
+        return target;
+    }
+
+    public void UpdateRetreat(CommandState cl)
+    {
+        var canAttack = Attack(cl, simulate: true);
+     
+        var isAcidDetected = cl.DiscoveredTilesMulti.ContainsKey(TileType.Acid);
+   
+        var isAcidCritical = Enum.GetValues<Direction>().Count(dir =>
+        {
+            var pos = cl.Head.Player.Position + dir;
+            return Tiles.IsWithinBounds(pos) && Tiles[pos] == TileType.Acid;
+        }) > 0;
+
+        var retreatTarget = AssessRetreatOptions(cl, out var enemyStrategy);
+
+        if (enemyStrategy != EnemyCenterStrategy.None)
+        {
+            Log($"Enemy strategy: {enemyStrategy}", LogType.Peril);
+        }
+
+        if (!_centerTiles.Contains(retreatTarget))
+        {
+            Log("Retreat target outside of safe zone!", LogType.FTL);
         }
 
         if (isAcidCritical)
@@ -758,26 +825,43 @@ public sealed class Bot
             Log("Acid is CRITICAL!", LogType.Peril);
         }
 
+        /*
+         * If can attack, and acid is not critical, spend our action by attacking.
+         * Also try stepping towards the retreat target (will work if no blocks are in our way)
+         */
         if (canAttack && !isAcidCritical)
         {
             // Attack when not in peril
 
-            Log("Pre-emptively attacking!", LogType.Warning);
+            Log("Attacking!", LogType.Warning);
             Attack(cl);
             Step(retreatTarget, cl, out _, false, false);
             return;
         }
 
+        /*
+         * Acid is critical, so we'll want to prioritize surviving instead of attacking. We'll spend our action going to the
+         * retreat target.
+         */
         if (canAttack && isAcidCritical)
         {
-            Log("Prioritizing survival above attacking target", LogType.Warning);
+            Log("Prioritizing survival above attacking target!", LogType.Peril);
         }
 
-        if (!Step(retreatTarget, cl, out var reached, useObstacleMining: !canAttack || isAcidDetected, useMiningFast: !canAttack))
+        if (!Step(retreatTarget, cl, out var reached, useObstacleMining: true, useMiningFast: true))
         {
-            var attacked = Attack(cl);
-            
-            Log($"Failed to step to center! Attack: {attacked}", LogType.FTL);
+            // We're in hot water here, not sure how to handle that!
+            // This should not happen.
+            // Anyway, we'll attack so we don't just stand still.
+
+            if (canAttack && !cl.HasAction)
+            {
+                Attack(cl);
+            }
+
+            Log($"Failed to step to center!", LogType.FTL);
+
+            return;
         }
 
         if (!reached)
