@@ -1,7 +1,6 @@
 ﻿using System.Drawing;
 using System.Net.Sockets;
 using System.Numerics;
-using System.Runtime.Intrinsics;
 using System.Text;
 
 namespace Common;

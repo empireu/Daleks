@@ -5,7 +5,6 @@ using GameFramework.Extensions;
 using GameFramework.Renderer;
 using GameFramework.Renderer.Batch;
 using GameFramework.Utilities.Extensions;
-using Veldrid;
 
 namespace Vizulacru;
 

@@ -401,7 +401,7 @@ internal sealed class WorldLayer : Layer, IDisposable
             {
                 var prevDepth = 0;
 
-                foreach (var log in _controller.Logs)
+                foreach (var log in _controller.LogsRound)
                 {
                     while (log.Depth > prevDepth)
                     {

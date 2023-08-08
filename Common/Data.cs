@@ -206,6 +206,18 @@ public class PrioritySet<TElement, TPriority> : IReadOnlyCollection<(TElement El
         return result;
     }
 
+    public TElement Dequeue(out TPriority priority)
+    {
+        if (_count == 0)
+        {
+            throw new InvalidOperationException("queue is empty");
+        }
+
+        _version++;
+        RemoveIndex(index: 0, out TElement result, out priority);
+        return result;
+    }
+
     public bool TryDequeue(out TElement element, out TPriority priority)
     {
         if (_count == 0)
@@ -262,6 +274,20 @@ public class PrioritySet<TElement, TPriority> : IReadOnlyCollection<(TElement El
 
             _index.Clear();
             _count = 0;
+        }
+    }
+
+    public void Update(TElement element, TPriority priority)
+    {
+        _version++;
+
+        if (_index.TryGetValue(element, out var index))
+        {
+            UpdateIndex(index, priority);
+        }
+        else
+        {
+            throw new KeyNotFoundException();
         }
     }
 

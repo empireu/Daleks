@@ -215,7 +215,6 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         {
             Ancestor = null,
             Cost = float.MaxValue,
-            IsVisited = false,
         });
 
         grid[startPoint].Cost = 0;
@@ -405,19 +404,23 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
     private Grid<PathfindingCell> RunPathfinding(Vector2di startPoint)
     {
-        var queue = new PrioritySet<Vector2di, float>();
-        
-        queue.Enqueue(startPoint, 0);
-
         var grid = CreateGrid(startPoint);
+
+        var queue = new PrioritySet<Vector2di, float>(Size.X * Size.Y, null, null);
+        
+        for (var y = 0; y < grid.Size.Y; y++)
+        {
+            for (var x = 0; x < grid.Size.X; x++)
+            {
+                queue.Enqueue(new Vector2di(x, y), grid[x, y].Cost);
+            }
+        }
 
         while (queue.Count > 0)
         {
             var currentPoint = queue.Dequeue();
 
             var currentCell = grid[currentPoint];
-
-            grid[currentPoint].IsVisited = true;
 
             for (var i = 0; i < 4; i++)
             {
@@ -430,14 +433,9 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
                 ref var neighborCell = ref grid[neighborPoint];
 
-                if (neighborCell.IsVisited)
-                {
-                    continue;
-                }
+                var neighborType = Tiles[neighborPoint];
 
-                var type = Tiles[neighborPoint];
-
-                if (type.IsUnbreakable())
+                if (neighborType.IsUnbreakable())
                 {
                     continue;
                 }
@@ -445,7 +443,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                 var newCost = 
                     currentCell.Cost + 
                     DiagonalCost(neighborPoint, grid) + 
-                    _costMap[(int)type] + 
+                    _costMap[(int)neighborType] + 
                     CostOverride[neighborPoint] +
                     1f;
 
@@ -453,9 +451,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
                 {
                     neighborCell.Cost = newCost;
                     neighborCell.Ancestor = currentPoint;
+                    queue.Update(neighborPoint, newCost);
                 }
-
-                queue.EnqueueOrUpdate(neighborPoint, neighborCell.Cost);
             }
         }
 
@@ -473,8 +470,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
     public struct PathfindingCell : IComparable<PathfindingCell>
     {
         public Vector2di? Ancestor;
+        
         public float Cost;
-        public bool IsVisited;
 
         public readonly int CompareTo(PathfindingCell other) => Cost.CompareTo(other.Cost);
     }

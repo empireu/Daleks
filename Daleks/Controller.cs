@@ -33,8 +33,8 @@ public sealed class BotConfig : IBotConfig
         { TileType.Dirt,    0f },
         { TileType.Stone,   5f },
         { TileType.Cobble,  5f },
-        { TileType.Iron,    -100f },
-        { TileType.Osmium,  -1000f },
+        { TileType.Iron,    -1000f },
+        { TileType.Osmium,  -10000f },
         { TileType.Base,    0f },
         { TileType.Acid,    BigCost },
         { TileType.Robot0,  BigCost },
@@ -128,36 +128,33 @@ public sealed class Bot
 
     public IBotConfig Config { get; }
     public MatchInfo Match { get; }
-
-    private readonly IReadOnlySet<Vector2di> _centerTiles;
-
     public int AcidRounds { get; }
 
     private readonly TileMap _tileMap;
 
     public IReadOnlyGrid<TileType> Tiles => _tileMap;
 
+    // The 9 tiles at the center of the map:
+    private readonly IReadOnlySet<Vector2di> _centerTiles;
+
+    // Tiles that were viewed at least once:
     private readonly HashSet<Vector2di> _discoveredTiles = new();
+
+    // Tiles that are undiscovered and could have ores (excludes bedrock edges)
     private readonly HashSet<Vector2di> _undiscoveredMiningCandidates = new();
+
+    // Ores that were seen:
     private readonly Dictionary<Vector2di, TileType> _pendingOres = new();
     
     private readonly Queue<UpgradeType> _upgradeQueue = new();
-    private readonly List<Log> _logs = new();
-    private int _logLevel = 0;
+    
+    private readonly List<Log> _logsRound = new();
+    
+    private int _logLevel;
 
-    /// <summary>
-    ///     Gets the tile positions that were visited so far.
-    /// </summary>
+   
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
-
-    /// <summary>
-    ///     Gets the tile positions that are yet to be visited.
-    /// </summary>
     public IReadOnlySet<Vector2di> UndiscoveredMiningCandidates => _undiscoveredMiningCandidates;
-
-    /// <summary>
-    ///     Gets the tile positions of ores that were observed and have not been mined yet.
-    /// </summary>
     public IReadOnlyDictionary<Vector2di, TileType> PendingOres => _pendingOres;
 
     /// <summary>
@@ -173,7 +170,7 @@ public sealed class Bot
     /// <summary>
     ///     Gets the logs that were generated last run.
     /// </summary>
-    public IReadOnlyList<Log> Logs => _logs;
+    public IReadOnlyList<Log> LogsRound => _logsRound;
 
     /// <summary>
     ///     Gets the next tile to be mined, if one exists.
@@ -185,29 +182,45 @@ public sealed class Bot
     /// </summary>
     public ExploreMode ExplorationMode { get; private set; } = ExploreMode.ClosestBase;
 
+    // All attacks that were attempted:
     private readonly List<AttackInfo> _allAttacks = new();
+
+    // Attacks attempted last round:
+    private readonly List<AttackInfo> _attacksRound = new();
 
     /// <summary>
     ///     Gets all attacks that have been initiated so far.
     /// </summary>
     public IReadOnlyList<AttackInfo> AllAttacks => _allAttacks;
 
-    private readonly List<AttackInfo> _attacksRound = new();
-
+    /// <summary>
+    ///     Gets the attacks that were attempted last round.
+    /// </summary>
     public IReadOnlyList<AttackInfo> AttacksRound => _attacksRound;
 
     private readonly Dictionary<Vector2di, SpottedPlayerInfo> _spottedPlayers = new();
 
     private int? _lastHp;
 
+    // All damage taken:
     private readonly List<TakenDamageInfo> _allDamageTaken = new();
-
-    public IReadOnlyList<TakenDamageInfo> AllDamageTaken => _allDamageTaken;
-
+    
+    // Damage taken last round:
     private readonly List<TakenDamageInfo> _damageTakenRound = new();
 
+    /// <summary>
+    ///     Gets all damage taken by the bot.
+    /// </summary>
+    public IReadOnlyList<TakenDamageInfo> AllDamageTaken => _allDamageTaken;
+
+    /// <summary>
+    ///     Gets damage taken by the bot last round.
+    /// </summary>
     public IReadOnlyList<TakenDamageInfo> DamageTakenRound => _damageTakenRound;
 
+    /// <summary>
+    ///     Gets the players that were recently spotted.
+    /// </summary>
     public IReadOnlyDictionary<Vector2di, SpottedPlayerInfo> SpottedPlayers => _spottedPlayers;
 
     public Bot(MatchInfo match, IBotConfig config, int gameRounds)
@@ -226,9 +239,10 @@ public sealed class Bot
 
         Config = config;
         Match = match;
+
         _tileMap = new TileMap(match.GridSize, config.CostMap, config.DiagonalPenalty);
 
-        // Ignore bedrock edges
+        // Ignores bedrock edges:
         for (var i = 1; i < match.GridSize.X - 1; i++)
         {
             for (var j = 1; j < match.GridSize.Y - 1; j++)
@@ -258,7 +272,7 @@ public sealed class Bot
 
     private void Log(string text, LogType type = LogType.Info)
     {
-        _logs.Add(new Log(_logLevel, text, type));
+        _logsRound.Add(new Log(_logLevel, text, type));
     }
 
     private void Indent()
@@ -271,11 +285,6 @@ public sealed class Bot
         --_logLevel;
     }
     
-    private void ResetExploreTarget()
-    {
-        _previousExploreTarget = null;
-    }
-
     private void UpdateTiles(CommandState cl)
     {
         var playerPos = cl.Head.Player.Position;
@@ -323,7 +332,7 @@ public sealed class Bot
         return kp * Vector2di.DistanceF(player, target) + kb * Vector2di.DistanceF(Match.BasePosition, target);
     }
     
-    private Vector2di? GetUnexploredTile(Player player)
+    private Vector2di? ScanUnexploredTile(Player p)
     {
         /*
          * Tiles are initially sorted using costs based on:
@@ -343,12 +352,12 @@ public sealed class Bot
          */
 
         var tiles = _undiscoveredMiningCandidates
-            .OrderByDescending(x => ExploreCost(player.Position, x))
+            .OrderByDescending(x => ExploreCost(p.Position, x))
             .ToList();
         
         Vector2di? best = null;
         var bestCost = float.MaxValue;
-        var offsets = Player.SightOffsets[player.Sight];
+        var offsets = Player.SightOffsets[p.Sight];
         
         var searched = 0;
 
@@ -359,7 +368,7 @@ public sealed class Bot
 
             var cost = 0f;
 
-            if (_tileMap.CanAccess(player.Position, candidate))
+            if (_tileMap.CanAccess(p.Position, candidate))
             {
                 for (var index = 0; index < offsets.Length; index++)
                 {
@@ -392,7 +401,21 @@ public sealed class Bot
         return best;
     }
 
-    private Vector2di? _previousExploreTarget;
+    /*
+     * Caching it makes the bot safer from getting stuck in cycles (could happen if we have inconsistent target metrics),
+     * and also reduces the performance impact of the scans we're doing, by doing them more sparsely.
+     * The criteria for invalidating a target is:
+     *  - Observing the actual tile at the position
+     *  - Doing something other then stepping towards the target (changing goal).
+     *      It is reasonable to assume that this makes the current target invalid, because the target was selected with the promise that the player would be constantly pursuing it.
+     */
+
+    private Vector2di? _exploreTarget;
+
+    private void InvalidateExploreTarget()
+    {
+        _exploreTarget = null;
+    }
 
     private Vector2di? GetNextExploreTarget(Player p)
     {
@@ -408,35 +431,32 @@ public sealed class Bot
 
             if (smallest.Count <= SmallCluster)
             {
-                // Target barycenter
                 Log($"Exploring cluster of {smallest.Count}", LogType.Warning);
+
                 return Vector2di.BarycenterMany(smallest).Round();
             }
         }
 
-        if (_previousExploreTarget.HasValue)
+        if (_exploreTarget.HasValue)
         {
-            var t = _previousExploreTarget.Value;
+            var t = _exploreTarget.Value;
 
             if (!_tileMap.Tiles[t].IsUnbreakable() && _undiscoveredMiningCandidates.Contains(t))
             {
                 Log("Using cached target...");
-                return _previousExploreTarget;
+
+                return _exploreTarget;
             }
         }
 
         Log("Getting new target!", LogType.Warning);
 
-        _previousExploreTarget = GetUnexploredTile(p);
+        _exploreTarget = ScanUnexploredTile(p);
         
-        return _previousExploreTarget;
+        return _exploreTarget;
     }
 
-    private bool Step(
-        CommandState cl, 
-        IReadOnlyList<Vector2di> path, 
-        bool useObstacleMining = true,
-        bool useMiningFast = true)
+    private bool Step(CommandState cl, IReadOnlyList<Vector2di> path, bool useObstacleMining = true, bool useMiningFast = true)
     {
         if (cl.Head.Player.Position != cl.Tail.Player.Position)
         {
@@ -470,9 +490,11 @@ public sealed class Bot
                     if (useObstacleMining)
                     {
                         cl.Mine(move);
+                        return true;
                     }
 
-                    return true;
+                    // Unfortunate
+                    return false;
                 }
 
                 // No more steps are possible
@@ -501,7 +523,10 @@ public sealed class Bot
     /// <param name="reached">True, if the target position has been reached (the player is at the target location). Otherwise, false.</param>
     /// <param name="useObstacleMining">If true, mining will be used to clear tiles adjacent to the player. If false, the player will likely get stuck.</param>
     /// <param name="useMiningFast">If true, mining will be done in an ahead-of-time fashion.</param>
-    /// <returns>True, if the step was performed successfully. Otherwise, false.</returns>
+    /// <returns>
+    ///     True, if the step was performed successfully.
+    ///     Otherwise, false. Failure happens if the target is invalid (blocked off or out of bounds) or <see cref="useObstacleMining"/> is false and the bot cannot step.
+    /// </returns>
     /// <exception cref="Exception">Thrown if the player movement state was changed prior to calling this routine.</exception>
     private bool Step(Vector2di target, CommandState cl, out bool reached, bool useObstacleMining = true, bool useMiningFast = true)
     {
@@ -584,7 +609,7 @@ public sealed class Bot
 
         if (canAttack)
         {
-            Log("Can attack whilst mining!");
+            Log("Can attack whilst mining!", LogType.Warning);
         }
 
         var success = Step(
@@ -599,7 +624,7 @@ public sealed class Bot
 
         if (!cl.HasAction && canAttack)
         {
-            Log("Attacking!");
+            Log("Attacking!"); // Though this probably won't work since we're probably moving and the enemy is also moving
             Attack(cl);
             return true;
         }
@@ -610,8 +635,10 @@ public sealed class Bot
 
             cl.Scan(playerPos.DirectionTo(NextMiningTile.Value));
         }
-        else
+        else if(cl.RemainingMines > 0)
         {
+            // Mines extra blocks if possible (because it is free)
+            // This is the only real use for the digging upgrade: collecting stone
             foreach (var direction in Enum.GetValues<Direction>())
             {
                 if (cl.IsMining(direction))
@@ -650,7 +677,7 @@ public sealed class Bot
         {
             var bought = cl.BuyBattery();
             Debug.Assert(bought);
-            ResetExploreTarget();
+            InvalidateExploreTarget();
         }
 
         return true;
@@ -658,9 +685,22 @@ public sealed class Bot
 
     private enum EnemyCenterStrategy
     {
+        /// <summary>
+        ///     Reported if no enemies were detected in the center region.
+        ///     Enemies may still exist outside of the center region.
+        /// </summary>
         None,
+
+        /// <summary>
+        ///     Reported if an enemy is camping in the center of the map and is actively placing blocks
+        ///     to block other players.
+        /// </summary>
         Boxing,
-        Undetermined
+
+        /// <summary>
+        ///     Reported if an enemy is in the center region of the map, but the strategy cannot be determined yet.
+        /// </summary>
+        Indeterminate
     }
 
     private Vector2di AssessRetreatOptions(CommandState cl, out EnemyCenterStrategy enemyStrategy)
@@ -672,7 +712,7 @@ public sealed class Bot
         /*
          * Detects blocked-off center
          * This disables the boxing strategy implicitly.
-         * - Undetermined (if any players are at center)
+         * - Indeterminate (if any players are at center)
          * - None
          */
         if (_tileMap.Tiles[target].IsUnbreakable())
@@ -717,14 +757,14 @@ public sealed class Bot
                 }
             }
 
-            // Boxing strategy is impossible now, so the only other options are None or Undetermined
+            // Boxing strategy is impossible now, so the only other options are None or Indeterminate
 
-            // We'll choose Undetermined if a player is in the center.
+            // We'll choose Indeterminate if a player is in the center.
 
             // Consider tiles in view (so they are up-to-date)
             enemyStrategy =
                 EnemiesAtCenter() 
-                    ? EnemyCenterStrategy.Undetermined 
+                    ? EnemyCenterStrategy.Indeterminate 
                     : EnemyCenterStrategy.None;
 
             return target;
@@ -733,7 +773,7 @@ public sealed class Bot
         /*
          * Detects box
          * - Boxed (if player is surrounded by non-walkable tiles)
-         * - Undetermined (if a player is at the center center, but not boxed in)
+         * - Indeterminate (if a player is at the center center, but not boxed in)
          */
         if (cl.DiscoveredTiles.Contains(target) && _tileMap.Tiles[target].IsRobot())
         {
@@ -785,13 +825,13 @@ public sealed class Bot
             else
             {
                 // If center tile is robot, then enemies are at center implicitly.
-                enemyStrategy = EnemyCenterStrategy.Undetermined;
+                enemyStrategy = EnemyCenterStrategy.Indeterminate;
             }
 
             return target;
         }
 
-        enemyStrategy = EnemiesAtCenter() ? EnemyCenterStrategy.Undetermined : EnemyCenterStrategy.None;
+        enemyStrategy = EnemiesAtCenter() ? EnemyCenterStrategy.Indeterminate : EnemyCenterStrategy.None;
 
         return target;
     }
@@ -799,14 +839,12 @@ public sealed class Bot
     public void UpdateRetreat(CommandState cl)
     {
         var canAttack = Attack(cl, simulate: true);
-     
-        var isAcidDetected = cl.DiscoveredTilesMulti.ContainsKey(TileType.Acid);
-   
-        var isAcidCritical = Enum.GetValues<Direction>().Count(dir =>
+
+        var isAcidCritical = Enum.GetValues<Direction>().Any(dir =>
         {
-            var pos = cl.Head.Player.Position + dir;
-            return Tiles.IsWithinBounds(pos) && Tiles[pos] == TileType.Acid;
-        }) > 0;
+            var tile = cl.Head.Player.Position + dir;
+            return Tiles.IsWithinBounds(tile) && Tiles[tile] == TileType.Acid;
+        });
 
         var retreatTarget = AssessRetreatOptions(cl, out var enemyStrategy);
 
@@ -831,8 +869,7 @@ public sealed class Bot
          */
         if (canAttack && !isAcidCritical)
         {
-            // Attack when not in peril
-
+            // Attack when not in peril:
             Log("Attacking!", LogType.Warning);
             Attack(cl);
             Step(retreatTarget, cl, out _, false, false);
@@ -898,7 +935,7 @@ public sealed class Bot
     private void PrepareUpdate()
     {
         Path = null;
-        _logs.Clear();
+        _logsRound.Clear();
         _logLevel = 0;
 
         _tileMap.BeginFrame();
@@ -1105,11 +1142,13 @@ public sealed class Bot
     public void Update(CommandState cl)
     {
         PrepareUpdate();
+     
         UpdateTiles(cl);
         UpdateSpottedPlayers(cl);
         LoadEnemyCostOverrides();
         UpdateIncomingDamage(cl);
         RunDecisions(cl);
+        
         EndUpdate();
     }
 

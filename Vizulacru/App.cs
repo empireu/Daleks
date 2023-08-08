@@ -345,7 +345,6 @@ internal sealed class App : GameApplication
     {
         ImGui.SaveIniSettingsToDisk("imgui_vizulacru.ini");
         Resources.BatchPool.Return(_toastBatch);
-
         base.Destroy();
     }
 }
