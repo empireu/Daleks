@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using Cheats;
 using Common;
 
 namespace Daleks;
@@ -131,6 +132,7 @@ public sealed class Bot
     public int AcidRounds { get; }
 
     private readonly TileMap _tileMap;
+    private readonly Hublou _hublou;
 
     public IReadOnlyGrid<TileType> Tiles => _tileMap;
 
@@ -152,7 +154,6 @@ public sealed class Bot
     
     private int _logLevel;
 
-   
     public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
     public IReadOnlySet<Vector2di> UndiscoveredMiningCandidates => _undiscoveredMiningCandidates;
     public IReadOnlyDictionary<Vector2di, TileType> PendingOres => _pendingOres;
@@ -241,6 +242,7 @@ public sealed class Bot
         Match = match;
 
         _tileMap = new TileMap(match.GridSize, config.CostMap, config.DiagonalPenalty);
+        _hublou = new Hublou(match.GridSize);
 
         // Ignores bedrock edges:
         for (var i = 1; i < match.GridSize.X - 1; i++)
@@ -932,14 +934,96 @@ public sealed class Bot
         Log($"Safe for ~{cl.Tail.Player.CobbleCount} rounds");
     }
 
+    private void BeginLogFrame()
+    {
+        _logsRound.Clear();
+        _logLevel = 0;
+    }
+
     private void PrepareUpdate()
     {
         Path = null;
-        _logsRound.Clear();
-        _logLevel = 0;
-
         _tileMap.BeginFrame();
         _attacksRound.Clear();
+    }
+
+    private bool _downloadedMap;
+    private readonly int _fandomType = Random.Shared.Next(0, 3);
+    private readonly int _subType = Random.Shared.Next(0, 2);
+
+    private void Magic(CommandState cl)
+    {
+        if (_hublou.Failed)
+        {
+            switch (_fandomType)
+            {
+                case 0:
+                    Log("Failed to ascend to a higher plane of existence", LogType.Warning);
+                    break;
+                case 1:
+                    Log("Failed to enter the time vortex!", LogType.Warning);
+                    break;
+                case 2:
+                    Log("COSMOS failed to open a window to the target universe!", LogType.Warning);
+                    break;
+            }
+
+            return;
+        }
+
+        if (_hublou.TryGetResult(out var download))
+        {
+            switch (_fandomType)
+            {
+                case 0:
+                    Log(_subType == 0 ? "Found Zero-Point-Module!" : "Successfully dialed 9-chevron address!", LogType.Peril);
+                    break;
+                case 1:
+                    Log(_subType == 0 ? "Successfully reached Gallifrey!" : "Successfully regenerated!", LogType.Peril);
+                    break;
+                case 2:
+                    Log(_subType == 0 ? "Successfully rescued Eric Bellis from Mars!" : "Alioth Merak has been defeated!", LogType.Peril);
+                    break;
+            }
+        }
+        else
+        {
+            return;
+        }
+
+        if (_downloadedMap)
+        {
+            return;
+        }
+
+        _downloadedMap = true;
+
+        for (var y = 0; y < Tiles.Size.Y; y++)
+        {
+            for (var x = 0; x < Tiles.Size.X; x++)
+            {
+                var tile = new Vector2di(x, y);
+
+                if (tile == cl.Head.Player.Position)
+                {
+                    continue;
+                }
+
+                if (cl.DiscoveredTiles.Contains(tile))
+                {
+                    continue;
+                }
+
+                var absolute = download[tile];
+
+                _tileMap.Tiles[tile] = absolute;
+
+                if (absolute is TileType.Iron or TileType.Osmium)
+                {
+                    _pendingOres.TryAdd(tile, absolute);
+                }
+            }
+        }
     }
 
     private void UpdateSpottedPlayers(CommandState cl)
@@ -1141,6 +1225,10 @@ public sealed class Bot
 
     public void Update(CommandState cl)
     {
+        BeginLogFrame();
+
+        Magic(cl);
+
         PrepareUpdate();
      
         UpdateTiles(cl);
