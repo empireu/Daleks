@@ -2,6 +2,7 @@
 using System.Runtime.CompilerServices;
 using Cheats;
 using Common;
+using MapGenerator;
 
 namespace Daleks;
 
@@ -14,6 +15,10 @@ public interface IBotConfig
     int ReserveOsmium { get; }
     int RoundsMargin { get; }
     float PlayerOverrideCost { get; }
+    public bool UseMemoryScanning { get; }
+    public bool UseSeedSearch { get; }
+    public int SeedSearchRewind { get; }
+    public int SeedSearchThreads { get; }
 }
 
 public sealed class BotConfig : IBotConfig
@@ -61,6 +66,12 @@ public sealed class BotConfig : IBotConfig
     public float PlayerOverrideCost { get; set; } = 1000;
     public int ReserveOsmium { get; set; } = 0;
     public int RoundsMargin { get; set; } = 15;
+
+    public bool UseMemoryScanning { get; set; } = false;
+    public bool UseSeedSearch { get; set; } = true;
+    public int SeedSearchRewind { get; set; } = 1000;
+    public int SeedSearchThreads { get; set; } = 6;
+
 }
 
 public readonly struct AttackInfo
@@ -132,7 +143,10 @@ public sealed class Bot
     public int AcidRounds { get; }
 
     private readonly TileMap _tileMap;
-    private readonly Hublou _hublou;
+
+    private readonly Hublou? _hublou;
+    private readonly Codex? _codex;
+    private bool _downloadedMap;
 
     public IReadOnlyGrid<TileType> Tiles => _tileMap;
 
@@ -242,7 +256,21 @@ public sealed class Bot
         Match = match;
 
         _tileMap = new TileMap(match.GridSize, config.CostMap, config.DiagonalPenalty);
-        _hublou = new Hublou(match.GridSize);
+
+        if (config.UseMemoryScanning)
+        {
+            _hublou = new Hublou(match.GridSize);
+        }
+
+        if (config.UseSeedSearch)
+        {
+            _codex = new Codex(
+                match.GridSize, 
+                match.GridSize.X == 89,
+                config.SeedSearchRewind,
+                config.SeedSearchThreads
+            );
+        }
 
         // Ignores bedrock edges:
         for (var i = 1; i < match.GridSize.X - 1; i++)
@@ -293,6 +321,8 @@ public sealed class Bot
 
         Indent();
 
+        var codexMarkers = new List<(Vector2di, TileType)>();
+
         foreach (var tilePos in cl.DiscoveredTiles)
         {
             if (tilePos == playerPos)
@@ -318,7 +348,14 @@ public sealed class Bot
             {
                 _pendingOres.Remove(tilePos);
             }
+
+            if (type is TileType.Stone or TileType.Iron or TileType.Osmium or TileType.Bedrock)
+            {
+                codexMarkers.Add((tilePos, type));
+            }
         }
+
+        _codex?.EnqueueEliminate(codexMarkers);
 
         Unindent();
 
@@ -947,44 +984,22 @@ public sealed class Bot
         _attacksRound.Clear();
     }
 
-    private bool _downloadedMap;
-    private readonly int _fandomType = Random.Shared.Next(0, 3);
-    private readonly int _subType = Random.Shared.Next(0, 2);
-
-    private void Magic(CommandState cl)
+    private void UpdateCheats(CommandState cl)
     {
+        if (_hublou == null)
+        {
+            return;
+        }
+
         if (_hublou.Failed)
         {
-            switch (_fandomType)
-            {
-                case 0:
-                    Log("Failed to ascend to a higher plane of existence", LogType.Warning);
-                    break;
-                case 1:
-                    Log("Failed to enter the time vortex!", LogType.Warning);
-                    break;
-                case 2:
-                    Log("COSMOS failed to open a window to the target universe!", LogType.Warning);
-                    break;
-            }
-
+            Log("Failed to breach dimensional barrier!", LogType.Peril);
             return;
         }
 
         if (_hublou.TryGetResult(out var download))
         {
-            switch (_fandomType)
-            {
-                case 0:
-                    Log(_subType == 0 ? "Found Zero-Point-Module!" : "Successfully dialed 9-chevron address!", LogType.Peril);
-                    break;
-                case 1:
-                    Log(_subType == 0 ? "Successfully reached Gallifrey!" : "Successfully regenerated!", LogType.Peril);
-                    break;
-                case 2:
-                    Log(_subType == 0 ? "Successfully rescued Eric Bellis from Mars!" : "Alioth Merak has been defeated!", LogType.Peril);
-                    break;
-            }
+            Log("Dimensional barrier has been breached!", LogType.Peril);
         }
         else
         {
@@ -998,6 +1013,7 @@ public sealed class Bot
 
         _downloadedMap = true;
 
+        // Loads the downloaded map, replacing previously seen tiles but not tiles in view.
         for (var y = 0; y < Tiles.Size.Y; y++)
         {
             for (var x = 0; x < Tiles.Size.X; x++)
@@ -1021,6 +1037,73 @@ public sealed class Bot
                 if (absolute is TileType.Iron or TileType.Osmium)
                 {
                     _pendingOres.TryAdd(tile, absolute);
+                }
+            }
+        }
+    }
+
+    private void UpdateCodex(CommandState cl)
+    {
+        if (_codex == null)
+        {
+            return;
+        }
+
+        if (_codex.Failed)
+        {
+            Log("Failed to find the answer to the ultimate question of life, the universe, and everything!", LogType.Peril);
+            return;
+        }
+
+        if (_codex.Answer != null)
+        {
+            Log("Found the answer to the ultimate question of life, the universe, and everything!", LogType.Peril);
+            Indent();
+            Log($"It is not 42, it is {_codex.Answer.Seed}.", LogType.Peril);
+            Unindent();
+        }
+        else
+        {
+            Log($"Secrets: {_codex.Candidates}", LogType.Warning);
+            Indent();
+            Log($"Deciphering... {(_codex.GenerateProgress * 100):F2}%", LogType.Warning);
+            Unindent();
+            return;
+        }
+
+        if (_downloadedMap)
+        {
+            return;
+        }
+
+        _downloadedMap = true;
+
+        var grid = _codex.Answer.Grid;
+
+        // Loads the generated map, but will not replace known tiles.
+        for (var y = 0; y < Tiles.Size.Y; y++)
+        {
+            for (var x = 0; x < Tiles.Size.X; x++)
+            {
+                var tile = new Vector2di(x, y);
+
+                if (tile == cl.Head.Player.Position)
+                {
+                    continue;
+                }
+
+                if (_tileMap.Tiles[tile] != TileType.Unknown)
+                {
+                    continue;
+                }
+
+                var candidate = grid[tile];
+
+                _tileMap.Tiles[tile] = candidate;
+
+                if (candidate is TileType.Iron or TileType.Osmium)
+                {
+                    _pendingOres.TryAdd(tile, candidate);
                 }
             }
         }
@@ -1226,12 +1309,13 @@ public sealed class Bot
     public void Update(CommandState cl)
     {
         BeginLogFrame();
-
-        Magic(cl);
-
+        UpdateCheats(cl);
         PrepareUpdate();
-     
+
         UpdateTiles(cl);
+
+        UpdateCodex(cl);
+
         UpdateSpottedPlayers(cl);
         LoadEnemyCostOverrides();
         UpdateIncomingDamage(cl);

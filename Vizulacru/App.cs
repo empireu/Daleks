@@ -128,6 +128,10 @@ internal sealed class App : GameApplication
     private float _playerOverrideCost;
     private int _reserveOsmium;
     private int _roundsMargin;
+    private bool _useMemoryScanning;
+    private bool _useSeedSearching;
+    private int _seedRewindSeconds;
+    private int _seedThreads;
 
     private void LoadConfig(IBotConfig cfg)
     {
@@ -141,6 +145,10 @@ internal sealed class App : GameApplication
         _playerOverrideCost = cfg.PlayerOverrideCost;
         _reserveOsmium = cfg.ReserveOsmium;
         _roundsMargin = cfg.RoundsMargin;
+        _useMemoryScanning = cfg.UseMemoryScanning;
+        _useSeedSearching = cfg.UseSeedSearch;
+        _seedRewindSeconds = cfg.SeedSearchRewind;
+        _seedThreads = cfg.SeedSearchThreads;
     }
 
     private int _gameRounds = 150;
@@ -243,6 +251,16 @@ internal sealed class App : GameApplication
             ImGui.InputInt("Reserve osmium", ref _reserveOsmium);
             ImGui.InputInt("Rounds margin", ref _roundsMargin);
 
+            ImGui.Separator();
+
+            ImGui.Checkbox("Use dimensional rift", ref _useMemoryScanning);
+            ImGui.Checkbox("Decipher universe", ref _useSeedSearching);
+            ImGui.Indent();
+            ImGui.SliderInt("Aggression", ref _seedThreads, 1, 32);
+            ImGui.InputInt("Temporal span", ref _seedRewindSeconds);
+            _seedRewindSeconds = Math.Max(_seedRewindSeconds, 1);
+            ImGui.Unindent();
+
             if (!string.IsNullOrEmpty(_typedConfigName))
             {
                 if (ImGui.Button("Save"))
@@ -259,7 +277,11 @@ internal sealed class App : GameApplication
                         UpgradeList = _upgrades.ToArray(),
                         PlayerOverrideCost = _playerOverrideCost,
                         ReserveOsmium = _reserveOsmium,
-                        RoundsMargin = _roundsMargin
+                        RoundsMargin = _roundsMargin,
+                        UseMemoryScanning = _useMemoryScanning,
+                        UseSeedSearch = _useSeedSearching,
+                        SeedSearchRewind = _seedRewindSeconds,
+                        SeedSearchThreads = _seedThreads
                     });
 
                     _configs.Save();

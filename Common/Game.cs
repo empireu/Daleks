@@ -648,4 +648,41 @@ public static class Tiles
     public static bool IsUnbreakable(this TileType type) => type is TileType.Bedrock;
 
     public static bool IsWalkable(this TileType type) => type is TileType.Dirt or TileType.Base or TileType.Acid or TileType.Unknown;
+
+    public static TileType ParseTile(char c) => c switch
+    {
+        'X' => TileType.Stone,
+        'A' => TileType.Cobble,
+        'B' => TileType.Bedrock,
+        'C' => TileType.Iron,
+        'D' => TileType.Osmium,
+        'E' => TileType.Base,
+        'F' => TileType.Acid,
+        '.' => TileType.Dirt,
+        '0' => TileType.Robot0,
+        '1' => TileType.Robot1,
+        '2' => TileType.Robot2,
+        '3' => TileType.Robot3,
+        '4' => TileType.Robot4,
+        _ => TileType.Unknown
+    };
+
+    public static char Char(this TileType type) => type switch
+    {
+        TileType.Stone => 'X',
+        TileType.Cobble => 'A',
+        TileType.Bedrock => 'B',
+        TileType.Iron => 'C',
+        TileType.Osmium => 'D',
+        TileType.Base => 'E',
+        TileType.Acid => 'F',
+        TileType.Dirt => '.',
+        TileType.Unknown => '?',
+        TileType.Robot0 => '0',
+        TileType.Robot1 => '1',
+        TileType.Robot2 => '2',
+        TileType.Robot3 => '3',
+        TileType.Robot4 => '4',
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+    };
 }
