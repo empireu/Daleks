@@ -4,8 +4,8 @@ namespace Daleks;
 
 public sealed class MatchInfo
 {
-    public Vector2di BasePosition { get; init; }
-    public Vector2di GridSize { get; init; }
+    public Vector2ds BasePosition { get; init; }
+    public Vector2ds GridSize { get; init; }
 }
 
 public class GameManager

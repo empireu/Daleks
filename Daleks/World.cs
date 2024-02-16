@@ -9,23 +9,21 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
     private readonly float _diagonalPenalty;
     private readonly float[] _costMap;
 
-    private bool _begun;
-
-    private sealed class FrameData
+    private sealed class CacheData
     {
         /// <summary>
         ///     Stores data obtained after running Dijkstra
         /// </summary>
         public sealed class PathfindingInfo
         {
-            public Vector2di Start { get; }
+            public Vector2ds Start { get; }
             public Grid<PathfindingCell> Grid { get; }
 
             // End point -> path
             // If null, the path is blocked off
-            public readonly Dictionary<Vector2di, List<Vector2di>?> TracedPaths = new();
+            public readonly Dictionary<Vector2ds, List<Vector2ds>?> TracedPaths = new();
 
-            public PathfindingInfo(Vector2di start, Grid<PathfindingCell> grid)
+            public PathfindingInfo(Vector2ds start, Grid<PathfindingCell> grid)
             {
                 Start = start;
                 Grid = grid;
@@ -33,8 +31,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         }
 
         // Start point -> Dijkstra grid
-        public readonly Dictionary<Vector2di, PathfindingInfo> Paths = new();
-        public readonly Dictionary<(Vector2di, Vector2di), bool> CanAccess = new();
+        public readonly Dictionary<Vector2ds, PathfindingInfo> Paths = new();
+        public readonly Dictionary<(Vector2ds, Vector2ds), bool> CanAccess = new();
 
         public void Clear()
         {
@@ -42,21 +40,13 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         }
     }
 
-    private readonly FrameData _data = new();
+    private readonly CacheData _cache = new();
 
     public IReadOnlyList<TileType> Cells => Tiles.Cells;
 
     public Grid<float> CostOverride { get; }
 
-    private readonly List<HashSet<Vector2di>> _unexploredClusters = new();
-    private readonly List<HashSet<Vector2di>> _exploredClusters = new();
-
-    public float GetCostOverride(TileType type) => _costMap[(int)type];
-
-    public IReadOnlyList<IReadOnlySet<Vector2di>> UnexploredClusters => _unexploredClusters;
-    public IReadOnlyList<IReadOnlySet<Vector2di>> ExploredClusters => _exploredClusters;
-
-    public TileMap(Vector2di size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
+    public TileMap(Vector2ds size, IReadOnlyDictionary<TileType, float> costMap, float diagonalPenalty)
     {
         _diagonalPenalty = diagonalPenalty;
      
@@ -105,109 +95,17 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         CostOverride = new Grid<float>(Size);
     }
 
-    private IEnumerable<HashSet<Vector2di>> RemoveClusters(HashSet<Vector2di> unexplored, Func<TileType, bool> predicate)
+    public void ClearCaches()
     {
-        var queue = new Queue<Vector2di>();
-
-        while (unexplored.Count > 0)
-        {
-            queue.Enqueue(unexplored.First());
-
-            var cluster = new HashSet<Vector2di>();
-
-            while (queue.Count > 0)
-            {
-                var front = queue.Dequeue();
-
-                if (!cluster.Add(front))
-                {
-                    continue;
-                }
-
-                unexplored.Remove(front);
-
-                for (byte i = 0; i < 4; i++)
-                {
-                    var neighbor = front + (Direction)i;
-
-                    if (Tiles.IsWithinBounds(neighbor) && predicate(Tiles[neighbor]))
-                    {
-                        queue.Enqueue(neighbor);
-                    }
-                }
-            }
-
-            yield return cluster;
-        }
-    }
-
-
-    private void ScanClusters()
-    {
-        _unexploredClusters.Clear();
-        _exploredClusters.Clear();
-
-        var unknownSource = new HashSet<Vector2di>(1024);
-        var knownSource = new HashSet<Vector2di>(1024);
-
-        for (var y = 1; y < Size.Y - 1; y++)
-        {
-            for (var x = 1; x < Size.X - 1; x++)
-            {
-                var tile = new Vector2di(x, y);
-
-                if (Tiles[tile] == TileType.Unknown)
-                {
-                    unknownSource.Add(tile);
-                }
-                else
-                {
-                    knownSource.Add(tile);
-                }
-            }
-        }
-
-        _unexploredClusters.AddRange(RemoveClusters(unknownSource, t => t == TileType.Unknown));
-        _exploredClusters.AddRange(RemoveClusters(knownSource, t => t != TileType.Unknown));
-    }
-
-    public void BeginFrame()
-    {
-        if (_begun)
-        {
-            throw new InvalidOperationException("Cannot begin frame before ending previous frame");
-        }
-
-        _begun = true;
-
-        _data.Clear();
-        ScanClusters();
+        _cache.Clear();
         Array.Fill(CostOverride.Storage, 0);
     }
 
-    public void EndFrame()
-    {
-        if (!_begun)
-        {
-            throw new InvalidOperationException("Cannot end frame before beginning");
-        }
-
-        _begun = false;
-    }
-
-    private void Validate()
-    {
-        if (!_begun)
-        {
-            throw new InvalidOperationException("Never begun frame");
-        }
-    }
-
-    public Vector2di Size { get; }
+    public Vector2ds Size { get; }
 
     public Grid<TileType> Tiles { get; }
     
-    private Grid<PathfindingCell> CreateGrid(Vector2di startPoint)
+    private Grid<PathfindingCell> CreateGrid(Vector2ds startPoint)
     {
         var grid = new Grid<PathfindingCell>(Size);
 
@@ -222,10 +120,8 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         return grid;
     }
 
-    public bool CanAccess(Vector2di startPoint, Vector2di goalPoint)
+    public bool CanAccess(Vector2ds startPoint, Vector2ds goalPoint)
     {
-        Validate();
-
         if (Tiles[startPoint].IsUnbreakable() || Tiles[goalPoint].IsUnbreakable())
         {
             return false;
@@ -233,12 +129,12 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
         var pair = (startPoint, goalPoint).Map(p => p.goalPoint.NormSqr < p.startPoint.NormSqr ? (p.goalPoint, p.startPoint) : p);
 
-        if (_data.CanAccess.TryGetValue(pair, out var result))
+        if (_cache.CanAccess.TryGetValue(pair, out var result))
         {
             return result;
         }
 
-        if (_data.Paths.TryGetValue(startPoint, out var info))
+        if (_cache.Paths.TryGetValue(startPoint, out var info))
         {
             if (info.TracedPaths.TryGetValue(goalPoint, out var p))
             {
@@ -246,13 +142,13 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             }
         }
 
-        var queue = new PriorityQueue<Vector2di, float>();
+        var queue = new PriorityQueue<Vector2ds, float>();
 
-        float Heuristic(Vector2di p) => Vector2di.Manhattan(p, goalPoint);
+        float Heuristic(Vector2ds p) => Vector2ds.Manhattan(p, goalPoint);
 
         queue.Enqueue(startPoint, Heuristic(startPoint));
 
-        var visited = new HashSet<Vector2di>();
+        var visited = new HashSet<Vector2ds>();
 
         while (queue.Count > 0)
         {
@@ -260,7 +156,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
 
             if (front == goalPoint)
             {
-                _data.CanAccess.Add(pair, true);
+                _cache.CanAccess.Add(pair, true);
                 return true;
             }
 
@@ -280,14 +176,14 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             }
         }
 
-        _data.CanAccess.Add(pair, false);
+        _cache.CanAccess.Add(pair, false);
 
         return false;
     }
 
-    private List<Vector2di>? Trace(FrameData.PathfindingInfo info, Vector2di goal)
+    private List<Vector2ds>? Trace(CacheData.PathfindingInfo info, Vector2ds goal)
     {
-        var result = new List<Vector2di>();
+        var result = new List<Vector2ds>();
 
         while (true)
         {
@@ -316,7 +212,7 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         return result;
     }
 
-    private List<Vector2di>? FromExistingGrid(Vector2di goalPoint, FrameData.PathfindingInfo info)
+    private List<Vector2ds>? FromExistingGrid(Vector2ds goalPoint, CacheData.PathfindingInfo info)
     {
         if (info.TracedPaths.TryGetValue(goalPoint, out var path))
         {
@@ -330,13 +226,11 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         return path;
     }
 
-    public IReadOnlyList<Vector2di>? FindPath(Vector2di startPoint, Vector2di goalPoint)
+    public IReadOnlyList<Vector2ds>? FindPath(Vector2ds startPoint, Vector2ds goalPoint)
     {
-        Validate();
-
         if (startPoint == goalPoint)
         {
-            return new List<Vector2di> { startPoint, goalPoint };
+            return new List<Vector2ds> { startPoint, goalPoint };
         }
         
         if (!Tiles.IsWithinBounds(startPoint) || Tiles[startPoint].IsUnbreakable())
@@ -349,38 +243,22 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
             return null;
         }
 
-        if (_data.Paths.TryGetValue(startPoint, out var existingData))
+        if (_cache.Paths.TryGetValue(startPoint, out var existingData))
         {
             return FromExistingGrid(goalPoint, existingData);
         }
 
         var grid = RunPathfinding(startPoint);
 
-        existingData = new FrameData.PathfindingInfo(startPoint, grid);
+        existingData = new CacheData.PathfindingInfo(startPoint, grid);
 
-        _data.Paths.Add(startPoint, existingData);
+        _cache.Paths.Add(startPoint, existingData);
 
         return FromExistingGrid(goalPoint, existingData);
     }
 
-    public IReadOnlyGrid<PathfindingCell> GetPathfindingGrid(Vector2di startPoint)
-    {
-        Validate();
-
-        if (_data.Paths.TryGetValue(startPoint, out var existingData))
-        {
-            return existingData.Grid;
-        }
-
-        var grid = RunPathfinding(startPoint);
-        existingData = new FrameData.PathfindingInfo(startPoint, grid);
-        _data.Paths.Add(startPoint, existingData);
-
-        return grid;
-    }
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float DiagonalCost(Vector2di cPos, Grid<PathfindingCell> grid)
+    private float DiagonalCost(Vector2ds cPos, Grid<PathfindingCell> grid)
     {
         var c = grid[cPos];
         if (!c.Ancestor.HasValue) return 0f;
@@ -402,17 +280,17 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
         return 0f;
     }
 
-    private Grid<PathfindingCell> RunPathfinding(Vector2di startPoint)
+    private Grid<PathfindingCell> RunPathfinding(Vector2ds startPoint)
     {
         var grid = CreateGrid(startPoint);
 
-        var queue = new PrioritySet<Vector2di, float>(Size.X * Size.Y, null, null);
+        var queue = new PrioritySet<Vector2ds, float>(Size.X * Size.Y, null, null);
         
         for (var y = 0; y < grid.Size.Y; y++)
         {
             for (var x = 0; x < grid.Size.X; x++)
             {
-                queue.Enqueue(new Vector2di(x, y), grid[x, y].Cost);
+                queue.Enqueue(new Vector2ds(x, y), grid[x, y].Cost);
             }
         }
 
@@ -465,14 +343,133 @@ public sealed class TileMap : IReadOnlyGrid<TileType>
     public bool IsWithinBounds(int x, int y) => Tiles.IsWithinBounds(x, y);
   
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsWithinBounds(Vector2di v) => Tiles.IsWithinBounds(v);
+    public bool IsWithinBounds(Vector2ds v) => Tiles.IsWithinBounds(v);
 
     public struct PathfindingCell : IComparable<PathfindingCell>
     {
-        public Vector2di? Ancestor;
+        public Vector2ds? Ancestor;
         
         public float Cost;
 
         public readonly int CompareTo(PathfindingCell other) => Cost.CompareTo(other.Cost);
+    }
+}
+
+public sealed class ExplorationAnalyzer
+{
+    private readonly TileMap _map;
+
+    private readonly HashSet<Vector2ds> _frontierEdges = new();
+
+    public ExplorationAnalyzer(TileMap map)
+    {
+        _map = map;
+    }
+
+    public IReadOnlySet<Vector2ds> FrontierEdges => _frontierEdges;
+
+    public void UpdateFrontiers(Options options)
+    {
+        _frontierEdges.Clear();
+        
+        var tiles = _map.Tiles;
+
+        for (var y = 0; y < tiles.Size.Y; y++)
+        {
+            for (var x = 0; x < tiles.Size.X; x++)
+            {
+                if (_map[x, y] != TileType.Dirt)
+                {
+                    continue;
+                }
+
+                if (tiles.IsWithinBounds(x - 1, y) && tiles[x - 1, y] == TileType.Unknown)
+                {
+                    _frontierEdges.Add(new Vector2ds(x, y));
+                    continue;
+                }
+
+                if (tiles.IsWithinBounds(x + 1, y) && tiles[x + 1 , y] == TileType.Unknown)
+                {
+                    _frontierEdges.Add(new Vector2ds(x, y));
+                    continue;
+                }
+                
+                if (tiles.IsWithinBounds(x, y - 1) && tiles[x, y - 1] == TileType.Unknown)
+                {
+                    _frontierEdges.Add(new Vector2ds(x, y));
+                    continue;
+                }
+
+                if (tiles.IsWithinBounds(x, y + 1) && tiles[x, y + 1] == TileType.Unknown)
+                {
+                    _frontierEdges.Add(new Vector2ds(x, y));
+                    continue;
+                }
+            }
+        }
+
+        _frontierEdges.RemoveWhere(frontier => !_map.CanAccess(options.PlayerPosition, frontier));
+    }
+
+    // Cost metric for visiting a frontier.
+    // This can factor in energy expenditure (fuel), time, etc.
+    private double ImplicitCost(ref Options options, Vector2ds frontierPoint)
+    {
+        var playerDistance = Vector2ds.Distance(frontierPoint, options.PlayerPosition) / options.MovementSpeed;
+        var baseDistance = Vector2ds.Distance(frontierPoint, options.BasePosition) / options.MovementSpeed;
+
+        return options.KCostPlayer * playerDistance + options.KCostBase * baseDistance;
+    }
+
+    // Utility (gain) of reaching a frontier (how useful this frontier is, compared to others)
+    // Currently, the number of cells discovered is used as utility.
+    private double Utility(ref Options options, Vector2ds frontierPoint)
+    {
+        var kJ = options.VisionOffsets.Count(offset =>
+        {
+            var position = frontierPoint + offset;
+
+            return _map.IsWithinBounds(position) && _map.Tiles[position] == TileType.Unknown;
+        });
+
+        return options.KUtility * kJ;
+    }
+
+    public Vector2ds? GetExplorationTarget(Options options)
+    {
+        if (_frontierEdges.Count == 0)
+        {
+            return null;
+        }
+
+        var bestFrontier = Vector2ds.Zero;
+        var bestWeight = double.MaxValue;
+
+        foreach (var frontier in _frontierEdges)
+        {
+            var implicitCost = ImplicitCost(ref options, frontier);
+            var utility = Utility(ref options, frontier);
+            var weight = implicitCost - utility;
+
+            if (weight < bestWeight)
+            {
+                bestWeight = weight;
+                bestFrontier = frontier;
+            }
+        }
+
+        return bestFrontier;
+    }
+
+    public readonly struct Options
+    {
+        public required double KCostPlayer { get; init; }
+        public required double KCostBase { get; init; }
+        public required double KUtility { get; init; }
+        public required Vector2ds PlayerPosition { get; init; }
+        public required Vector2ds BasePosition { get; init; }
+        public required Vector2ds[] VisionOffsets { get; init; }
+        public required double MovementSpeed { get; init; }
     }
 }

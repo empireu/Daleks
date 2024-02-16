@@ -4,7 +4,7 @@ using MapGenerator;
 
 Console.WriteLine(Simulacru.TimeSeed());
 
-var gr = Simulacru.Generate(new Vector2di(127, 127), 3141, true);
+var gr = Simulacru.Generate(new Vector2ds(127, 127), 3141, true);
 
 var sb = new StringBuilder();
 

@@ -122,6 +122,7 @@ internal sealed class App : GameApplication
     private float _exploreClosestB;
     private float _exploreClosestBaseP;
     private float _exploreClosestBaseB;
+    private float _kUtility;
     private Dictionary<TileType, float> _costs = new();
     private float _diagonalPenalty;
     private List<UpgradeType> _upgrades = new(0);
@@ -139,6 +140,7 @@ internal sealed class App : GameApplication
         _exploreClosestB = cfg.ExploreCostMultipliers[Bot.ExploreMode.Closest].Base;
         _exploreClosestBaseP = cfg.ExploreCostMultipliers[Bot.ExploreMode.ClosestBase].Player;
         _exploreClosestBaseB = cfg.ExploreCostMultipliers[Bot.ExploreMode.ClosestBase].Base;
+        _kUtility = cfg.UtilityMultiplier;
         _costs = new Dictionary<TileType, float>(cfg.CostMap);
         _diagonalPenalty = cfg.DiagonalPenalty;
         _upgrades = cfg.UpgradeList.ToList();
@@ -175,7 +177,7 @@ internal sealed class App : GameApplication
                 ImGui.InputFloat("Closest - Base", ref _exploreClosestB);
                 ImGui.InputFloat("Closest Base - Player", ref _exploreClosestBaseP);
                 ImGui.InputFloat("Closest Base - Base", ref _exploreClosestBaseB);
-
+                ImGui.InputFloat("Utility", ref _kUtility);
                 ImGui.Unindent();
             }
 
@@ -272,6 +274,7 @@ internal sealed class App : GameApplication
                             { Bot.ExploreMode.Closest, (_exploreClosestP, _exploreClosestB) },
                             { Bot.ExploreMode.ClosestBase, (_exploreClosestBaseP, _exploreClosestBaseB) }
                         },
+                        UtilityMultiplier = _kUtility,
                         CostMap = new Dictionary<TileType, float>(_costs),
                         DiagonalPenalty = _diagonalPenalty,
                         UpgradeList = _upgrades.ToArray(),

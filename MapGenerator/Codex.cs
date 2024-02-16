@@ -11,13 +11,13 @@ public sealed class CodexAnswer
 
 public sealed class Codex
 {
-    private readonly Vector2di _mapSize;
+    private readonly Vector2ds _mapSize;
     private readonly bool _fewerResources;
     private readonly int _rewindSeconds;
     private readonly int _threads;
-    private readonly HashSet<Vector2di> _eliminated = new();
+    private readonly HashSet<Vector2ds> _eliminated = new();
 
-    private readonly BlockingCollection<(Vector2di, TileType)[]> _markerQueue = new();
+    private readonly BlockingCollection<(Vector2ds, TileType)[]> _markerQueue = new();
 
     public CodexAnswer? Answer { get; private set; }
     
@@ -27,7 +27,7 @@ public sealed class Codex
 
     public double GenerateProgress { get; private set; }
 
-    public Codex(Vector2di mapSize, bool fewerResources, int rewindSeconds, int threads)
+    public Codex(Vector2ds mapSize, bool fewerResources, int rewindSeconds, int threads)
     {
         _mapSize = mapSize;
         _fewerResources = fewerResources;
@@ -98,14 +98,14 @@ public sealed class Codex
     }
 
 
-    public void EnqueueEliminate(IEnumerable<(Vector2di, TileType)> markers)
+    public void EnqueueEliminate(IEnumerable<(Vector2ds, TileType)> markers)
     {
         if (Answer != null)
         {
             return;
         }
 
-        var results = new List<(Vector2di, TileType)>();
+        var results = new List<(Vector2ds, TileType)>();
 
         foreach (var (tile, type) in markers)
         {

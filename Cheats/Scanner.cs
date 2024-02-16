@@ -129,7 +129,7 @@ internal sealed class MemoryScanner : IDisposable
 
 public sealed class Hublou
 {
-    private readonly Vector2di _mapSize;
+    private readonly Vector2ds _mapSize;
     private Grid<TileType>? _result;
 
     public bool Failed { get; private set; }
@@ -147,7 +147,7 @@ public sealed class Hublou
         return grid != null;
     }
 
-    public Hublou(Vector2di mapSize)
+    public Hublou(Vector2ds mapSize)
     {
         _mapSize = mapSize;
 
@@ -189,7 +189,7 @@ public sealed class Hublou
         Failed = true;
     }
 
-    private static Grid<TileType>? Scan(Vector2di mapSize)
+    private static Grid<TileType>? Scan(Vector2ds mapSize)
     {
         var windowTitles = new HashSet<string>
         {

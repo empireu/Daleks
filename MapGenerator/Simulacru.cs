@@ -41,9 +41,9 @@ public static class Simulacru
     [DllImport("SimulacrSUS.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int TimeSeed();
 
-    private static Vector2di MazeSize(Vector2di mapSize) => new((mapSize.X + 1) / 2, (mapSize.Y + 1) / 2);
+    private static Vector2ds MazeSize(Vector2ds mapSize) => new((mapSize.X + 1) / 2, (mapSize.Y + 1) / 2);
 
-    public static unsafe Grid<TileType> Generate(Vector2di mapSize, int seed, bool fewerResources)
+    public static unsafe Grid<TileType> Generate(Vector2ds mapSize, int seed, bool fewerResources)
     {
         var mazeSize = MazeSize(mapSize);
 

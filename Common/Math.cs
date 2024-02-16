@@ -10,7 +10,7 @@ public enum Direction : byte
     R = 3
 }
 
-public readonly struct Vector2di : IComparable<Vector2di>
+public readonly struct Vector2ds : IComparable<Vector2ds>
 {
     public short X { get; init; }
     public short Y { get; init; }
@@ -20,13 +20,13 @@ public readonly struct Vector2di : IComparable<Vector2di>
 
     private static readonly Direction[] Directions = Enum.GetValues<Direction>(); 
 
-    public Vector2di(short x, short y)
+    public Vector2ds(short x, short y)
     {
         X = x;
         Y = y;
     }
 
-    public Vector2di(int x, int y)
+    public Vector2ds(int x, int y)
     {
         X = (short)x;
         Y = (short)y;
@@ -34,13 +34,13 @@ public readonly struct Vector2di : IComparable<Vector2di>
 
     public override string ToString() => $"X={X}, Y={Y}";
 
-    public override bool Equals(object? obj) => obj is Vector2di v && this.Equals(v);
+    public override bool Equals(object? obj) => obj is Vector2ds v && this.Equals(v);
 
-    public bool Equals(Vector2di other) => X == other.X && Y == other.Y;
+    public bool Equals(Vector2ds other) => X == other.X && Y == other.Y;
 
     public override int GetHashCode() => HashCode.Combine(X, Y);
 
-    public Direction DirectionTo(Vector2di b)
+    public Direction DirectionTo(Vector2ds b)
     {
         if (this == b)
         {
@@ -52,30 +52,30 @@ public readonly struct Vector2di : IComparable<Vector2di>
         return Directions.MinBy(n => DistanceSqr(a + n, b));
     }
 
-    public static Vector2di operator +(Vector2di a, Vector2di b) => new(a.X + b.X, a.Y + b.Y);
-    public static Vector2di operator +(Vector2di a, Direction d) => a + d.Step();
-    public static Vector2di operator -(Vector2di a, Vector2di b) => new(a.X - b.X, a.Y - b.Y);
-    public static Vector2di operator -(Vector2di a, Direction d) => a - d.Step();
-    public static Vector2di operator /(Vector2di a, Vector2di b) => new(a.X / b.X, a.Y / b.Y);
-    public static Vector2di operator /(Vector2di a, int s) => new(a.X / s, a.Y / s);
-    public static Vector2di operator *(Vector2di a, Vector2di b) => new(a.X * b.X, a.Y * b.Y);
-    public static Vector2di operator *(Vector2di a, int s) => new(a.X * s, a.Y * s);
-    public static bool operator ==(Vector2di a, Vector2di b) => a.Equals(b);
-    public static bool operator !=(Vector2di a, Vector2di b) => !a.Equals(b);
+    public static Vector2ds operator +(Vector2ds a, Vector2ds b) => new(a.X + b.X, a.Y + b.Y);
+    public static Vector2ds operator +(Vector2ds a, Direction d) => a + d.Step();
+    public static Vector2ds operator -(Vector2ds a, Vector2ds b) => new(a.X - b.X, a.Y - b.Y);
+    public static Vector2ds operator -(Vector2ds a, Direction d) => a - d.Step();
+    public static Vector2ds operator /(Vector2ds a, Vector2ds b) => new(a.X / b.X, a.Y / b.Y);
+    public static Vector2ds operator /(Vector2ds a, int s) => new(a.X / s, a.Y / s);
+    public static Vector2ds operator *(Vector2ds a, Vector2ds b) => new(a.X * b.X, a.Y * b.Y);
+    public static Vector2ds operator *(Vector2ds a, int s) => new(a.X * s, a.Y * s);
+    public static bool operator ==(Vector2ds a, Vector2ds b) => a.Equals(b);
+    public static bool operator !=(Vector2ds a, Vector2ds b) => !a.Equals(b);
 
-    public static readonly Vector2di Zero = new(0, 0);
-    public static readonly Vector2di UnitX = new(1, 0);
-    public static readonly Vector2di UnitY = new(0, 1);
-    public static readonly Vector2di One = new(1, 1);
+    public static readonly Vector2ds Zero = new(0, 0);
+    public static readonly Vector2ds UnitX = new(1, 0);
+    public static readonly Vector2ds UnitY = new(0, 1);
+    public static readonly Vector2ds One = new(1, 1);
 
-    public static int DistanceSqr(Vector2di a, Vector2di b) => (a - b).NormSqr;
-    public static double Distance(Vector2di a, Vector2di b) => (a - b).Norm;
-    public static float DistanceF(Vector2di a, Vector2di b) => (a - b).NormF;
-    public static int Manhattan(Vector2di a, Vector2di b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
+    public static int DistanceSqr(Vector2ds a, Vector2ds b) => (a - b).NormSqr;
+    public static double Distance(Vector2ds a, Vector2ds b) => (a - b).Norm;
+    public static float DistanceF(Vector2ds a, Vector2ds b) => (a - b).NormF;
+    public static int Manhattan(Vector2ds a, Vector2ds b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
 
-    public int CompareTo(Vector2di other) => this.NormSqr.CompareTo(other.NormSqr);
+    public int CompareTo(Vector2ds other) => this.NormSqr.CompareTo(other.NormSqr);
 
-    public static Vector2d BarycenterMany(IEnumerable<Vector2di> points)
+    public static Vector2d BarycenterMany(IEnumerable<Vector2ds> points)
     {
         var x = 0d;
         var y = 0d;
@@ -137,9 +137,9 @@ public readonly struct Vector2d
 
     public override string ToString() => $"X={X}, Y={Y}";
 
-    public Vector2di Floor() => new((int)Math.Floor(X), (int)Math.Floor(Y));
-    public Vector2di Round() => new((int)Math.Round(X), (int)Math.Round(Y));
-    public Vector2di Ceiling() => new((int)Math.Ceiling(X), (int)Math.Ceiling(Y));
+    public Vector2ds Floor() => new((int)Math.Floor(X), (int)Math.Floor(Y));
+    public Vector2ds Round() => new((int)Math.Round(X), (int)Math.Round(Y));
+    public Vector2ds Ceiling() => new((int)Math.Ceiling(X), (int)Math.Ceiling(Y));
 
     public static bool operator ==(Vector2d a, Vector2d b) => a.Equals(b);
     public static bool operator !=(Vector2d a, Vector2d b) => !a.Equals(b);

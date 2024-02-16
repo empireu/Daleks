@@ -26,7 +26,7 @@ Log($"Waiting for {count} clients...");
 var clientListener = new TcpListener(IPAddress.Any, clientPort);
 clientListener.Start();
 
-var clients = new BiMap<TcpClient, int>();
+var clients = new HashBiMap<TcpClient, int>();
 
 for (var i = 0; i < count; i++)
 {
@@ -36,7 +36,7 @@ for (var i = 0; i < count; i++)
 
     var id = client.ReceiveInt();
 
-    if (clients.Contains(id))
+    if (clients.ContainsBackward(id))
     {
         client.SendInt(0);
         throw new Exception($"Duplicate ID {clients}");

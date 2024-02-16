@@ -11,10 +11,10 @@ public readonly struct Player
         { 3, 9 }
     };
 
-    public static readonly IReadOnlyDictionary<int, Vector2di[]> SightOffsets = SightDiameters.ToDictionary(kvp => kvp.Key, kvp =>
+    public static readonly IReadOnlyDictionary<int, Vector2ds[]> SightOffsets = SightDiameters.ToDictionary(kvp => kvp.Key, kvp =>
     {
         var radius = SightDiameters[kvp.Key] / 2;
-        var results = new List<Vector2di>();
+        var results = new List<Vector2ds>();
 
         var magic = kvp.Key switch
         {
@@ -33,7 +33,7 @@ public readonly struct Player
                     continue;
                 }
 
-                var v = new Vector2di(i, j);
+                var v = new Vector2ds(i, j);
 
                 if (v.Norm > magic)
                 {
@@ -47,10 +47,10 @@ public readonly struct Player
         return results.ToArray();
     });
 
-    public static readonly IReadOnlyDictionary<int, Vector2di[]> SightContours = SightOffsets.ToDictionary(kvp => kvp.Key, kvp =>
+    public static readonly IReadOnlyDictionary<int, Vector2ds[]> SightContours = SightOffsets.ToDictionary(kvp => kvp.Key, kvp =>
     {
         var disc = kvp.Value;
-        var results = new List<Vector2di>();
+        var results = new List<Vector2ds>();
 
         foreach (var item in kvp.Value)
         {
@@ -58,7 +58,7 @@ public readonly struct Player
             {
                 var neighbor = item + direction;
 
-                if (neighbor == Vector2di.Zero)
+                if (neighbor == Vector2ds.Zero)
                 {
                     continue;
                 }
@@ -74,7 +74,7 @@ public readonly struct Player
         return results.ToArray();
     });
 
-    public Vector2di Position { get; init; }
+    public Vector2ds Position { get; init; }
     public int Hp { get; init; }
     public int Dig { get; init; }
     public int Attack { get; init; }
@@ -118,9 +118,9 @@ public readonly struct Player
 
 public sealed class CommandState
 {
-    public Vector2di BasePosition { get; }
+    public Vector2ds BasePosition { get; }
 
-    public CommandState(GameSnapshot headSnapshot, Vector2di basePosition)
+    public CommandState(GameSnapshot headSnapshot, Vector2ds basePosition)
     {
         BasePosition = basePosition;
         _states = new List<GameSnapshot> { headSnapshot };
@@ -139,8 +139,8 @@ public sealed class CommandState
     public GameSnapshot Head => _states.First();
     public GameSnapshot Tail => _states.Last();
 
-    public IReadOnlySet<Vector2di> DiscoveredTiles => Head.DiscoveredTiles;
-    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTilesMulti => Head.DiscoveredTilesMulti;
+    public IReadOnlySet<Vector2ds> DiscoveredTiles => Head.DiscoveredTiles;
+    public IReadOnlyMultiMap<TileType, Vector2ds> DiscoveredTilesMulti => Head.DiscoveredTilesMulti;
 
     public bool HasAction => _actions.Any();
 
@@ -490,18 +490,18 @@ public enum TileType : byte
 public sealed class GameSnapshot : IReadOnlyGrid<TileType>
 {
     private readonly Grid<TileType> _grid;
-    private readonly HashSet<Vector2di> _discoveredTiles = new();
-    private readonly HashMultiMap<TileType, Vector2di> _discoveredTilesMulti = new();
+    private readonly HashSet<Vector2ds> _discoveredTiles = new();
+    private readonly HashMultiMap<TileType, Vector2ds> _discoveredTilesMulti = new();
 
     public IReadOnlyGrid<TileType> Grid => _grid;
     public IReadOnlyList<TileType> Cells => _grid.Cells;
-    public Vector2di Size => _grid.Size;
-    public IReadOnlySet<Vector2di> DiscoveredTiles => _discoveredTiles;
-    public IReadOnlyHashMultiMap<TileType, Vector2di> DiscoveredTilesMulti => _discoveredTilesMulti;
+    public Vector2ds Size => _grid.Size;
+    public IReadOnlySet<Vector2ds> DiscoveredTiles => _discoveredTiles;
+    public IReadOnlyMultiMap<TileType, Vector2ds> DiscoveredTilesMulti => _discoveredTilesMulti;
 
     public int Round { get; }
 
-    private GameSnapshot(Grid<TileType> grid, int round, HashSet<Vector2di> discoveredTiles, HashMultiMap<TileType, Vector2di> discoveredTilesMulti)
+    private GameSnapshot(Grid<TileType> grid, int round, HashSet<Vector2ds> discoveredTiles, HashMultiMap<TileType, Vector2ds> discoveredTilesMulti)
     {
         _grid = grid;
         _discoveredTiles = discoveredTiles;
@@ -509,7 +509,7 @@ public sealed class GameSnapshot : IReadOnlyGrid<TileType>
         Round = round;
     }
 
-    private GameSnapshot(Vector2di gridSize, int round)
+    private GameSnapshot(Vector2ds gridSize, int round)
     {
         _grid = new Grid<TileType>(gridSize);
         Round = round;
@@ -518,9 +518,9 @@ public sealed class GameSnapshot : IReadOnlyGrid<TileType>
     public Player Player { get; private set; }
 
     public TileType this[int x, int y] => _grid[x, y];
-    public TileType this[Vector2di v] => _grid[v.X, v.Y];
+    public TileType this[Vector2ds v] => _grid[v.X, v.Y];
     public bool IsWithinBounds(int x, int y) => _grid.IsWithinBounds(x, y);
-    public bool IsWithinBounds(Vector2di v) => _grid.IsWithinBounds(v);
+    public bool IsWithinBounds(Vector2ds v) => _grid.IsWithinBounds(v);
     
     public GameSnapshot Bind(Player player)
     {
@@ -532,7 +532,7 @@ public sealed class GameSnapshot : IReadOnlyGrid<TileType>
 
     private void ScanView()
     {
-        var queue = new Queue<Vector2di>();
+        var queue = new Queue<Vector2ds>();
 
         queue.Enqueue(Player.Position);
 
@@ -563,13 +563,13 @@ public sealed class GameSnapshot : IReadOnlyGrid<TileType>
 
     #region Parser
 
-    private static Vector2di PopTuple(ref Span<string> lines)
+    private static Vector2ds PopTuple(ref Span<string> lines)
     {
         var result = lines[0].Map(str =>
         {
             var tokens = str.Split(' ');
 
-            return new Vector2di(int.Parse(tokens[0]), int.Parse(tokens[1]));
+            return new Vector2ds(int.Parse(tokens[0]), int.Parse(tokens[1]));
         });
 
         lines = lines[1..];

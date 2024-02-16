@@ -1,16 +1,17 @@
 ﻿using System.Collections;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
 namespace Common;
 
 public interface IReadOnlyGrid<out T>
 {
-    Vector2di Size { get; }
+    Vector2ds Size { get; }
     T this[int x, int y] { get; }
-    T this[Vector2di v] => this[v.X, v.Y];
+    T this[Vector2ds v] => this[v.X, v.Y];
     bool IsWithinBounds(int x, int y);
-    bool IsWithinBounds(Vector2di v);
+    bool IsWithinBounds(Vector2ds v);
     public IReadOnlyList<T> Cells { get; }
 }
 
@@ -20,55 +21,82 @@ public sealed class Grid<T> : IReadOnlyGrid<T>
 
     public IReadOnlyList<T> Cells => Storage;
 
-    public Vector2di Size { get; }
+    public Vector2ds Size { get; }
 
-    public Grid(T[] storage, Vector2di size)
+    public Grid(T[] storage, Vector2ds size)
     {
         Storage = storage;
         Size = size;
     }
 
-    public Grid(Vector2di size) : this(new T[size.X * size.Y], size) { }
+    public Grid(Vector2ds size) : this(new T[size.X * size.Y], size) { }
 
     private ref T Get(int x, int y) => ref Storage[y * Size.X + x];
 
     public ref T this[int x, int y] => ref Get(x, y);
 
-    public ref T this[Vector2di v] => ref Get(v.X, v.Y);
+    public ref T this[Vector2ds v] => ref Get(v.X, v.Y);
 
     T IReadOnlyGrid<T>.this[int x, int y] => Get(x, y);
 
-    T IReadOnlyGrid<T>.this[Vector2di v] => Get(v.X, v.Y);
+    T IReadOnlyGrid<T>.this[Vector2ds v] => Get(v.X, v.Y);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool IsWithinBounds(int x, int y) => x >= 0 && x < Size.X && y >= 0 && y < Size.Y;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsWithinBounds(Vector2di v) => IsWithinBounds(v.X, v.Y);
+    public bool IsWithinBounds(Vector2ds v) => IsWithinBounds(v.X, v.Y);
 
     public Grid<T> Bind() => new(Storage.ToArray(), Size);
 }
 
-public interface IReadOnlyHashMultiMap<in TKey, TValue>
+public interface IReadOnlyMultiMap<TKey, TValue>
 {
     int Count { get; }
+    IReadOnlyCollection<TKey> Keys { get; }
     IReadOnlySet<TValue> this[TKey k] { get; }
     bool ContainsKey(TKey k);
 }
 
-public class HashMultiMap<TKey, TValue> : IReadOnlyHashMultiMap<TKey, TValue> where TKey : notnull
+public interface IMultiMap<TKey, TValue> : IReadOnlyMultiMap<TKey, TValue>
+{
+    bool Add(TKey k, TValue v);
+    bool Remove(TKey k);
+    bool Remove(TKey k, TValue v);
+    void Clear();
+}
+
+public sealed class HashMultiMap<TKey, TValue> : IMultiMap<TKey, TValue> where TKey : notnull
 {
     public readonly Dictionary<TKey, HashSet<TValue>> Map = new();
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private HashSet<TValue> Get(TKey k) => Map.TryGetValue(k, out var e) ? e : new HashSet<TValue>().Also(s => Map.Add(k, s));
+    private HashSet<TValue> Get(TKey k) =>
+        Map.TryGetValue(k, out var set)
+            ? set
+            : new HashSet<TValue>().Also(s => Map.Add(k, s));
 
     public int Count => Map.Count;
+
+    public IReadOnlyCollection<TKey> Keys => Map.Keys;
+
     public HashSet<TValue> this[TKey k] => Get(k);
 
-    IReadOnlySet<TValue> IReadOnlyHashMultiMap<TKey, TValue>.this[TKey k] => Get(k);
+    IReadOnlySet<TValue> IReadOnlyMultiMap<TKey, TValue>.this[TKey k] => Get(k);
 
-    public void Add(TKey k, TValue v) => this[k].Add(v);
+    public bool Add(TKey k, TValue v) => this[k].Add(v);
+
+    public HashSet<TValue>? Place(TKey key, HashSet<TValue> set)
+    {
+        if (!Map.Remove(key, out var old))
+        {
+            old = null;
+        }
+
+        Map.Add(key, set);
+
+        return old;
+    }
 
     public bool ContainsKey(TKey k)
     {
@@ -82,22 +110,72 @@ public class HashMultiMap<TKey, TValue> : IReadOnlyHashMultiMap<TKey, TValue> wh
 
     public bool Remove(TKey k) => Map.Remove(k);
 
+    public bool Remove(TKey k, [NotNullWhen(true)] out HashSet<TValue>? set) => Map.Remove(k, out set);
+
     public bool Remove(TKey k, TValue v) => Map.TryGetValue(k, out var set) && set.Remove(v);
+
+    public void Clear()
+    {
+        Map.Clear();
+    }
 }
 
-public class BiMap<TForward, TBackward> where TForward : notnull where TBackward : notnull
+public interface IReadOnlyBiMap<TForward, TBackward>
 {
-    public Dictionary<TForward, TBackward> Forward { get; } = new();
-    public Dictionary<TBackward, TForward> Backward { get; } = new();
+    IReadOnlyDictionary<TForward, TBackward> Forward { get; }
+    IReadOnlyDictionary<TBackward, TForward> Backward { get; }
+    bool ContainsForward(TForward f);
+    bool ContainsBackward(TBackward b);
+}
+
+public interface IBiMap<TForward, TBackward> : IReadOnlyBiMap<TForward, TBackward>
+{
+    void Associate(TForward f, TBackward b);
+    bool Disassociate(TForward f, TBackward b);
+    void Clear();
+}
+
+public class HashBiMap<TForward, TBackward> : IBiMap<TForward, TBackward> where TForward : notnull where TBackward : notnull
+{
+    private readonly Dictionary<TForward, TBackward> _forward = new();
+    private readonly Dictionary<TBackward, TForward> _backward = new();
+
+    public IReadOnlyDictionary<TForward, TBackward> Forward => _forward;
+    public IReadOnlyDictionary<TBackward, TForward> Backward => _backward;
+
+    public bool ContainsForward(TForward f) => Forward.ContainsKey(f);
+
+    public bool ContainsBackward(TBackward b) => Backward.ContainsKey(b);
 
     public void Associate(TForward f, TBackward b)
     {
-        Forward.Add(f, b);
-        Backward.Add(b, f);
+        _forward.Add(f, b);
+        _backward.Add(b, f);
     }
 
-    public bool Contains(TForward f) => Forward.ContainsKey(f);
-    public bool Contains(TBackward b) => Backward.ContainsKey(b);
+    public bool Disassociate(TForward f, TBackward b)
+    {
+        var removedF = _forward.Remove(f, out var actualBackward);
+        var removedB = _backward.Remove(b, out var actualForward);
+
+#if DEBUG
+        Debug.Assert(removedF == removedB);
+
+        if (removedF)
+        {
+            Debug.Assert(f.Equals(actualForward));
+            Debug.Assert(b.Equals(actualBackward));
+        }
+#endif
+
+        return removedF;
+    }
+
+    public void Clear()
+    {
+        _forward.Clear();
+        _backward.Clear();
+    }
 }
 
 public sealed class Histogram<TKey> where TKey : notnull

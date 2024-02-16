@@ -18,17 +18,17 @@ public static class Extensions
         return m(t);
     }
 
-    public static Vector2di Step(this Direction dir) => dir switch
+    public static Vector2ds Step(this Direction dir) => dir switch
     {
-        Direction.L => new Vector2di(-1, 0),
-        Direction.R => new Vector2di(1, 0),
-        Direction.U => new Vector2di(0, -1),
-        Direction.D => new Vector2di(0, 1),
+        Direction.L => new Vector2ds(-1, 0),
+        Direction.R => new Vector2ds(1, 0),
+        Direction.U => new Vector2ds(0, -1),
+        Direction.D => new Vector2ds(0, 1),
         _ => throw new ArgumentOutOfRangeException(nameof(dir), dir, $"Unexpected direction {dir}")
     };
 
-    public static bool Contains(this Rectangle rect, Vector2di p) => rect.Contains(p.X, p.Y);
-    public static Vector2di CenterI(this Rectangle rect) => new(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+    public static bool Contains(this Rectangle rect, Vector2ds p) => rect.Contains(p.X, p.Y);
+    public static Vector2ds CenterI(this Rectangle rect) => new(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
     public static Vector2 Center(this Rectangle rect) => new(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
 
     public static void ReadMany(this Stream stream, Span<byte> destination)
